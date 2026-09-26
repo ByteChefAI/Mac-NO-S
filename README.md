@@ -1,6 +1,6 @@
 # Mac-NO-S
 
-A browser-based desktop inspired by macOS, built with React, TypeScript, Zustand, and Tailwind CSS. Files and appearance preferences live in browser local storage. Safari's optional proxy runs separately from the UI.
+A browser-based desktop inspired by macOS, built with React, TypeScript, Zustand, and Tailwind CSS. Files and system preferences live in browser local storage. Custom SVG cursor artwork is supplied in `cursors/`. Safari's proxy and the assistant relay run in the Express backend.
 
 ## Run it
 
@@ -18,7 +18,7 @@ Mac Assistant sends requests through the local Express `/api/assistant` route to
 1. **Core structure:** `src/system` owns typed application/window models and a persisted Zustand store; `src/apps` contains app surfaces; `server` hosts the optional Safari proxy.
 2. **State manager:** window focus, z-order, visibility, frame, appearance, wallpaper, and the virtual filesystem are managed centrally in `src/system/store.ts`.
 3. **Window manager:** `Window.tsx` implements dragging, edge/corner resizing, minimize, maximize, and close controls.
-4. **Desktop shell:** `Desktop.tsx`, `MenuBar.tsx`, and `Dock.tsx` compose the desktop, status controls, app menus, and dock.
+4. **Desktop shell:** `Desktop.tsx`, `MenuBar.tsx`, and `Dock.tsx` compose the desktop, status controls, app menus, dock, and custom pointer/drag/resize cursors.
 5. **Built-in apps:** Finder, Terminal, TextEdit, Settings, Safari, and Mac Assistant use the shared OS store. Assistant tool calls can open apps and read or write virtual files; assistant access can be disabled in Privacy & Security.
 6. **Safari proxy:** `server/index.ts` validates public destinations and redirects, bounds response size/time, and rewrites HTML, CSS imports, inline styles, and responsive image URLs through the proxy. It is a basic browsing bridge, not a hardened general-purpose web gateway.
 
