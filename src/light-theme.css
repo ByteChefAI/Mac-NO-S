@@ -1,0 +1,107 @@
+.theme-light .finder-app {
+  background: rgba(248, 249, 251, .94);
+  color: #24262b;
+}
+
+.theme-light .finder-sidebar {
+  background: rgba(239, 241, 244, .92);
+  border-color: #00000012;
+}
+
+.theme-light .sidebar-group-label,
+.theme-light .sidebar-bottom,
+.theme-light .finder-status {
+  color: #727782;
+}
+
+.theme-light .sidebar-item {
+  color: #363941;
+}
+
+.theme-light .sidebar-item.selected {
+  background: #dce9f8;
+}
+
+.theme-light .finder-toolbar {
+  border-color: #00000012;
+}
+
+.theme-light .finder-toolbar button,
+.theme-light .toolbar-actions button {
+  color: #50555d;
+}
+
+.theme-light .finder-toolbar button:hover,
+.theme-light .toolbar-actions button:hover,
+.theme-light .file-entry:hover {
+  background: #0000000a;
+}
+
+.theme-light .file-entry {
+  color: #34373e;
+}
+
+.theme-light .file-entry.selected {
+  background: #d8e7fa;
+  border-color: #a8c7ee;
+}
+
+.theme-light .empty-folder {
+  color: #777c85;
+}
+
+.theme-light .finder-status {
+  border-color: #00000010;
+}
+
+.theme-light .settings-app {
+  background: #f5f6f8;
+  color: #25272d;
+}
+
+.theme-light .settings-sidebar {
+  background: #eceef1;
+  border-color: #00000012;
+}
+
+.theme-light .settings-search {
+  background: #ffffff;
+  color: #777c84;
+}
+
+.theme-light .settings-search input,
+.theme-light .settings-sidebar > button {
+  color: #363940;
+}
+
+.theme-light .settings-sidebar > button.selected {
+  background: #d5e5f9;
+}
+
+.theme-light .settings-main {
+  background: #f8f9fa;
+}
+
+.theme-light .settings-main > p,
+.theme-light .setting-row small {
+  color: #717680;
+}
+
+.theme-light .appearance-options button,
+.theme-light .wallpaper-options button {
+  color: #383a40;
+}
+
+.theme-light .appearance-options button.chosen,
+.theme-light .wallpaper-options button.chosen {
+  background: #eaf2fc;
+}
+
+.theme-light .setting-row {
+  border-color: #00000012;
+}
+
+.theme-light .spec-pill {
+  background: #e9ebee;
+  color: #555a63;
+}
