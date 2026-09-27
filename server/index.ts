@@ -84,6 +84,33 @@ app.post('/api/assistant', async (request, response) => {
   } finally { clearTimeout(timeout) }
 })
 
+app.post('/api/assistant/transcribe', express.raw({ type: 'audio/*', limit: '16mb' }), async (request, response) => {
+  const apiKey = request.get('x-groq-api-key')
+  if (!apiKey || apiKey.length > 512) { response.status(401).json({ error: 'Add a valid Groq API key in Mac Assistant settings.' }); return }
+  if (!Buffer.isBuffer(request.body) || request.body.length === 0) { response.status(400).json({ error: 'No voice recording was received.' }); return }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 60000)
+  try {
+    const contentType = request.get('content-type')?.split(';')[0] ?? 'audio/webm'
+    const extension = contentType.includes('ogg') ? 'ogg' : contentType.includes('mp4') ? 'm4a' : contentType.includes('wav') ? 'wav' : contentType.includes('mpeg') ? 'mp3' : 'webm'
+    const form = new FormData()
+    form.append('model', 'whisper-large-v3-turbo')
+    form.append('response_format', 'json')
+    form.append('file', new Blob([new Uint8Array(request.body)], { type: contentType }), `voice-command.${extension}`)
+    const upstream = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    })
+    const data = await upstream.json()
+    response.status(upstream.status).json(data)
+  } catch (error) {
+    const message = error instanceof Error && error.name === 'AbortError' ? 'Voice transcription timed out.' : 'Could not transcribe this recording with Groq.'
+    response.status(502).json({ error: message })
+  } finally { clearTimeout(timeout) }
+})
+
 app.get('/api/proxy', async (request, response) => {
   const initialUrl = request.query.url
   if (typeof initialUrl !== 'string' || initialUrl.length > 4096) { response.status(400).type('text/plain').send('A valid URL is required.'); return }
@@ -120,6 +147,29 @@ app.get('/api/proxy', async (request, response) => {
   } catch (error) {
     const message = error instanceof Error && error.name === 'AbortError' ? 'The website took too long to respond.' : error instanceof Error ? error.message : 'The remote website could not be reached.'
     response.status(502).type('text/plain').send(message)
+  } finally { clearTimeout(timeout) }
+})
+
+app.get('/api/assistant/models', async (request, response) => {
+  const apiKey = request.get('x-groq-api-key')
+  if (!apiKey || apiKey.length > 512) { response.status(401).json({ error: 'Add a valid Groq API key in Mac Assistant settings.' }); return }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 20000)
+  try {
+    const upstream = await fetch('https://api.groq.com/openai/v1/models', {
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    const data = await upstream.json()
+    if (!upstream.ok) { response.status(upstream.status).json(data); return }
+    const models = (Array.isArray(data.data) ? data.data : [])
+      .filter((model: { id?: unknown; active?: unknown }) => typeof model.id === 'string' && model.active !== false && !/(?:whisper|embed|guard|tts|audio)/i.test(model.id))
+      .map((model: { id: string; context_window?: number }) => ({ id: model.id, contextWindow: model.context_window }))
+      .sort((first: { id: string }, second: { id: string }) => first.id.localeCompare(second.id))
+    response.json({ models })
+  } catch (error) {
+    const message = error instanceof Error && error.name === 'AbortError' ? 'Groq model discovery timed out.' : 'Could not load Groq models. Check the server connection and API key.'
+    response.status(502).json({ error: message })
   } finally { clearTimeout(timeout) }
 })
 

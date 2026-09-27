@@ -1,6 +1,6 @@
 # Mac-NO-S
 
-A browser-based desktop inspired by macOS, built with React, TypeScript, Zustand, and Tailwind CSS. Files and system preferences live in browser local storage. Custom SVG cursor artwork is supplied in `cursors/`. Safari's proxy and the assistant relay run in the Express backend.
+A browser-based desktop inspired by macOS, built with React, TypeScript, Zustand, and Tailwind CSS. Files and system preferences live in browser local storage. It can be installed as a PWA using the repository logo; its service worker caches the app shell and static resources while bypassing API requests. Custom SVG cursor artwork is supplied in `cursors/`. Safari's proxy and assistant APIs run in the Express backend.
 
 ## Run it
 
@@ -9,9 +9,11 @@ npm install
 npm run dev:full
 ```
 
-Open the Vite URL shown in the terminal. To run only the desktop, use `npm run dev`; Safari's proxy browsing requires `npm run server` in a second terminal. The proxy only accepts public HTTP(S) hosts and limits responses to 12 MB. Websites can still behave differently from a native browser, and the proxy does not guarantee compatibility with every site.
+Open the Vite URL shown in the terminal. To install the PWA locally, run `npm run build` followed by `npm run preview:full`, then open `http://localhost:4173` in a supported browser and use its Install control. Service-worker installation is enabled in production builds, not the Vite development server. To run only the desktop, use `npm run dev`; Safari's proxy browsing requires `npm run server` in a second terminal. The proxy only accepts public HTTP(S) hosts and limits responses to 12 MB. Websites can still behave differently from a native browser, and the proxy does not guarantee compatibility with every site.
 
-Mac Assistant sends requests through the local Express `/api/assistant` route to avoid browser CORS failures. Add a Groq API key in the assistant's settings; it is held in session storage and forwarded per request, never persisted by the backend. Do not use a shared or untrusted browser profile for API keys.
+Mac Assistant defaults to Groq's `qwen/qwen3-32b` tool-capable chat model, discovers the models available to your key, and sends requests through the local Express `/api/assistant` route to avoid browser CORS failures. Add a Groq API key in the assistant's settings; it is held in session storage and forwarded per request, never persisted by the backend. Do not use a shared or untrusted browser profile for API keys.
+
+Hey Mac voice control requires microphone permission and a browser with Web Speech recognition support. The first-run desktop callout explains the wake phrase and enables listening. Once enabled, it listens while the app or installed PWA is open; browser security does not allow a website to listen outside its own running page or after it is closed. The top menu bar's microphone button is push-to-talk: press and hold to record, then release to send the audio to Groq Whisper for transcription and command handling. Assistant actions animate a labeled cursor through Dock, Finder, and TextEdit controls instead of mutating files behind the interface. Spoken file and app commands operate on Mac-NO-S's virtual filesystem and desktop, not the host computer's shell or arbitrary host files.
 
 ## Implementation roadmap
 

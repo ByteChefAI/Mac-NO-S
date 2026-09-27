@@ -50,7 +50,7 @@ export function Window({ id, children }: Props) {
   }
 
   return (
-    <section className={`os-window ${active ? 'is-active' : ''} ${windowState.maximized ? 'is-maximized' : ''}`} style={{ ...(windowState.maximized ? {} : { left: windowState.frame.x, top: windowState.frame.y, width: windowState.frame.width, height: windowState.frame.height }), zIndex: windowState.zIndex }} onPointerDown={() => focusApp(id)}>
+    <section data-window-app={id} className={`os-window ${active ? 'is-active' : ''} ${windowState.maximized ? 'is-maximized' : ''}`} style={{ ...(windowState.maximized ? {} : { left: windowState.frame.x, top: windowState.frame.y, width: windowState.frame.width, height: windowState.frame.height }), zIndex: windowState.zIndex }} onPointerDown={() => focusApp(id)}>
       <div className="window-titlebar" onPointerDown={startDrag} onPointerMove={move} onPointerUp={() => { drag.current = null; resize.current = null }} onDoubleClick={() => toggleMaximize(id)}>
         <div className="traffic-lights">
           <button className="traffic close" title="Close" aria-label={`Close ${appNames[id]}`} onClick={() => closeApp(id)}><X size={9} /></button>

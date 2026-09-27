@@ -3,6 +3,8 @@ import { useShallow } from 'zustand/react/shallow'
 import { AssistantApp, FinderApp, SafariApp, SettingsApp, TerminalApp, TextEditApp } from '../apps/Apps'
 import { Dock } from './Dock'
 import { MenuBar } from './MenuBar'
+import { VoiceControl } from './VoiceControl'
+import { AssistantCursor } from './AssistantCursor'
 import { Window } from './Window'
 import { useSystemStore } from './store'
 import type { AppId } from './types'
@@ -29,6 +31,8 @@ export function Desktop() {
         return <Window key={id} id={id}><App /></Window>
       })}
       <Dock />
+      <VoiceControl />
+      <AssistantCursor />
     </main>
   )
 }

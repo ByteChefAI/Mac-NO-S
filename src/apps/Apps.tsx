@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Cloud, Code2, FilePlus2, Folder, FolderPlus, Globe, Grid2X2, Home, LoaderCircle, LockKeyhole, MoreHorizontal, Plus, RefreshCw, Save, Search, Send, Settings2, ShieldAlert, Sidebar, Sparkles, Trash2, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Cloud, FilePlus2, Folder, FolderPlus, Globe, Grid2X2, LoaderCircle, LockKeyhole, Mic, MicOff, MoreHorizontal, Plus, RefreshCw, Save, Search, Send, Settings2, ShieldAlert, Sidebar, Sparkles, Trash2, Wifi, X } from 'lucide-react'
 import { useSystemStore, normalizePath } from '../system/store'
-import type { AppId, FsEntry } from '../system/types'
+import type { FsEntry } from '../system/types'
+import { assistantTools, DEFAULT_GROQ_MODEL, executeAssistantTool } from './assistantTools'
 
 const childrenAt = (files: Record<string, FsEntry>, folder: string) => Object.entries(files)
   .filter(([path]) => path !== folder && normalizePath(path.slice(0, path.lastIndexOf('/')) || '/') === folder)
@@ -16,20 +17,33 @@ export function FinderApp() {
   const [folder, setFolder] = useState('/Documents')
   const [selection, setSelection] = useState<string | null>(null)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
+  const [draftEntry, setDraftEntry] = useState<{ type: 'folder' | 'file'; name: string }>({ type: 'file', name: '' })
+  const [creating, setCreating] = useState(false)
   const entries = useMemo(() => childrenAt(files, folder), [files, folder])
   const navigate = (path: string) => { setFolder(path); setSelection(null) }
-  const newFolder = () => { const name = window.prompt('New folder name'); if (name?.trim()) createEntry(`${folder}/${name.trim()}`, 'folder') }
+  const beginEntry = (type: 'folder' | 'file') => { setDraftEntry({ type, name: type === 'folder' ? 'Untitled Folder' : 'Untitled.txt' }); setCreating(true) }
+  const commitEntry = (event: React.FormEvent) => {
+    event.preventDefault()
+    const name = draftEntry.name.trim()
+    if (!name) return
+    const path = `${folder}/${name}`
+    if (createEntry(path, draftEntry.type)) {
+      setCreating(false)
+      setSelection(path)
+      if (draftEntry.type === 'file') openFile(path)
+    }
+  }
   const openFile = (path: string) => {
     openApp('textedit')
     window.setTimeout(() => window.dispatchEvent(new CustomEvent('open-text-file', { detail: path })), 0)
   }
-  const newFile = () => { const name = window.prompt('New file name', 'Untitled.txt'); if (name?.trim()) { const path = `${folder}/${name.trim()}`; if (createEntry(path, 'file', '')) openFile(path) } }
   const openSelected = (path: string, entry: FsEntry) => { if (entry.type === 'folder') navigate(path); else openFile(path) }
 
   return <div className="finder-app">
-    <aside className="finder-sidebar"><div className="sidebar-group-label">Favorites</div>{[['/Desktop', 'Desktop'], ['/Documents', 'Documents'], ['/Downloads', 'Downloads'], ['/Pictures', 'Pictures']].map(([path, label]) => <button key={path} className={`sidebar-item ${folder === path ? 'selected' : ''}`} onClick={() => navigate(path)}><span>{label === 'Desktop' ? '▧' : label === 'Documents' ? '▤' : label === 'Downloads' ? '⇩' : '▣'}</span>{label}</button>)}<div className="sidebar-group-label locations-label">Locations</div><button className="sidebar-item" onClick={() => navigate('/')}><span>⌘</span>Macintosh HD</button><div className="sidebar-bottom"><Cloud size={15} /> iCloud Drive</div></aside>
-    <section className="finder-main"><div className="finder-toolbar"><div className="finder-nav"><button title="Back" onClick={() => navigate('/') }><ArrowLeft size={15} /></button><button title="Forward" disabled><ArrowRight size={15} /></button></div><h2>{basename(folder)}</h2><div className="toolbar-actions"><button title="New folder" onClick={newFolder}><FolderPlus size={16} /></button><button title="New file" onClick={newFile}><FilePlus2 size={16} /></button><button title="Delete selected" disabled={!selection} onClick={() => { if (selection && window.confirm(`Move ${basename(selection)} to the Trash?`)) { deleteEntry(selection); setSelection(null) } }}><Trash2 size={15} /></button><button title="List view" className={layout === 'list' ? 'active' : ''} onClick={() => setLayout(layout === 'grid' ? 'list' : 'grid')}><Grid2X2 size={15} /></button><button title="More options"><MoreHorizontal size={17} /></button><button title="Search"><Search size={15} /></button></div></div><div className={`finder-path ${layout}`}>
-      {entries.length ? entries.map(([path, entry]) => <button key={path} className={`file-entry ${selection === path ? 'selected' : ''}`} onClick={() => setSelection(path)} onDoubleClick={() => openSelected(path, entry)}>{iconFor(entry)}<span>{basename(path)}</span></button>) : <div className="empty-folder"><Folder size={38} /><span>This folder is empty</span></div>}
+    <aside className="finder-sidebar"><div className="sidebar-group-label">Favorites</div>{[['/Desktop', 'Desktop'], ['/Documents', 'Documents'], ['/Downloads', 'Downloads'], ['/Pictures', 'Pictures']].map(([path, label]) => <button key={path} data-path={path} className={`sidebar-item ${folder === path ? 'selected' : ''}`} onClick={() => navigate(path)}><span>{label === 'Desktop' ? '▧' : label === 'Documents' ? '▤' : label === 'Downloads' ? '⇩' : '▣'}</span>{label}</button>)}<div className="sidebar-group-label locations-label">Locations</div><button className="sidebar-item" data-path="/" onClick={() => navigate('/')}><span>⌘</span>Macintosh HD</button><div className="sidebar-bottom"><Cloud size={15} /> iCloud Drive</div></aside>
+    <section className="finder-main"><div className="finder-toolbar"><div className="finder-nav"><button title="Back" onClick={() => navigate('/') }><ArrowLeft size={15} /></button><button title="Forward" disabled><ArrowRight size={15} /></button></div><h2>{basename(folder)}</h2><div className="toolbar-actions"><button title="New folder" onClick={() => beginEntry('folder')}><FolderPlus size={16} /></button><button title="New file" onClick={() => beginEntry('file')}><FilePlus2 size={16} /></button><button title="Delete selected" disabled={!selection} onClick={() => { if (selection && window.confirm(`Move ${basename(selection)} to the Trash?`)) { deleteEntry(selection); setSelection(null) } }}><Trash2 size={15} /></button><button title="List view" className={layout === 'list' ? 'active' : ''} onClick={() => setLayout(layout === 'grid' ? 'list' : 'grid')}><Grid2X2 size={15} /></button><button title="More options"><MoreHorizontal size={17} /></button><button title="Search"><Search size={15} /></button></div></div><div className={`finder-path ${layout}`} data-current-folder={folder}>
+      {creating && <form className="file-entry-create" onSubmit={commitEntry}><input data-assistant-entry-name aria-label={`New ${draftEntry.type} name`} autoFocus value={draftEntry.name} onChange={(event) => setDraftEntry({ ...draftEntry, name: event.target.value })} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(false) }} /><button data-assistant-entry-submit type="submit" aria-label="Create item"><Check size={14} /></button></form>}
+      {entries.length ? entries.map(([path, entry]) => <button key={path} data-entry-path={path} className={`file-entry ${selection === path ? 'selected' : ''}`} onClick={() => setSelection(path)} onDoubleClick={() => openSelected(path, entry)}>{iconFor(entry)}<span>{basename(path)}</span></button>) : !creating && <div className="empty-folder"><Folder size={38} /><span>This folder is empty</span></div>}
     </div><footer className="finder-status">{entries.length} items <span>Available on this Mac</span></footer></section>
   </div>
 }
@@ -48,7 +62,7 @@ export function TextEditApp() {
   useEffect(() => { if (files[path]) setContent(files[path].content ?? '') }, [path])
   const save = () => { if (!files[path]) writeFile(path, content); else writeFile(path, content); setSaved(true) }
   const chooseFile = (next: string) => { setPath(next); setContent(files[next]?.content ?? ''); setSaved(true) }
-  return <div className="textedit-app"><div className="textedit-toolbar"><select aria-label="Document" value={path} onChange={(event) => chooseFile(event.target.value)}>{filePaths.map((file) => <option key={file} value={file}>{basename(file)}</option>)}</select><span className="save-state">{saved ? <><Check size={12} /> Saved</> : 'Edited'}</span><button className="primary-button" onClick={save}><Save size={14} /> Save</button></div><textarea aria-label="Document text" spellCheck value={content} onChange={(event) => { setContent(event.target.value); setSaved(false) }} /></div>
+  return <div className="textedit-app"><div className="textedit-toolbar"><select aria-label="Document" value={path} onChange={(event) => chooseFile(event.target.value)}>{filePaths.map((file) => <option key={file} value={file}>{basename(file)}</option>)}</select><span className="save-state">{saved ? <><Check size={12} /> Saved</> : 'Edited'}</span><button className="primary-button" data-assistant-save onClick={save}><Save size={14} /> Save</button></div><textarea aria-label="Document text" spellCheck value={content} onChange={(event) => { setContent(event.target.value); setSaved(false) }} /></div>
 }
 
 export function TerminalApp() {
@@ -155,44 +169,100 @@ export function SafariApp() {
   return <div className="safari-app"><div className="safari-toolbar"><button title="Show sidebar" onClick={() => setShowSidebar(!showSidebar)}><Sidebar size={16} /></button><div className="safari-nav"><button title="Back" disabled={index === 0} onClick={() => go(index - 1)}><ArrowLeft size={15} /></button><button title="Forward" disabled={index >= history.length - 1} onClick={() => go(index + 1)}><ArrowRight size={15} /></button></div><form className="address-bar" onSubmit={(event) => { event.preventDefault(); navigate(address) }}><LockKeyhole size={12} /><input aria-label="Website address" value={address} onChange={(event) => setAddress(event.target.value)} onFocus={(event) => event.currentTarget.select()} /><button type="button" aria-label="Reload" title="Reload" onClick={() => { setLoading(true); setFailed(false); setRefreshKey((key) => key + 1) }}><RefreshCw size={13} /></button></form><button title="New tab" onClick={() => navigate('https://example.com')}><Plus size={16} /></button><button title="More"><MoreHorizontal size={17} /></button></div><div className="safari-tabs"><span className="safari-tab"><Globe size={12} />{new URL(page).hostname}<button title="Close tab"><X size={11} /></button></span><button title="New tab" onClick={() => navigate('https://example.com')}><Plus size={13} /></button></div><div className="safari-viewport">{showSidebar && <aside className="safari-sidebar"><strong>Favorites</strong><button onClick={() => navigate('https://example.com')}>Example</button><button onClick={() => navigate('https://developer.mozilla.org')}>MDN</button><button onClick={() => navigate('https://wikipedia.org')}>Wikipedia</button></aside>}<iframe key={`${page}-${refreshKey}`} title="Safari web content" src={src} sandbox="allow-scripts allow-forms allow-popups" onLoad={() => { setLoading(false); setFailed(false) }} onError={() => { setLoading(false); setFailed(true) }} />{loading && <div className="safari-loading"><LoaderCircle size={20} className="spin" /> Loading {new URL(page).hostname}…</div>}{failed && <div className="safari-error"><ShieldAlert size={27} /><strong>Safari can’t open this page</strong><span>Start the optional proxy service with <code>npm run server</code>.</span></div>}</div><footer className="safari-status"><span><LockKeyhole size={10} /> Private browsing</span><span>{new URL(page).hostname}</span></footer></div>
 }
 
-const assistantTools = [{ type: 'function', function: { name: 'control_os', description: 'Control the desktop or change its virtual filesystem.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['open_app', 'create_file', 'create_folder', 'read_file', 'list_files'] }, app: { type: 'string', enum: ['finder', 'safari', 'textedit', 'terminal', 'settings', 'assistant'] }, path: { type: 'string' }, content: { type: 'string' } }, required: ['action'] } } }]
+type GroqModel = { id: string; contextWindow?: number }
 
 export function AssistantApp() {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([{ role: 'assistant', content: 'Good afternoon. What can I help you with?' }])
   const [input, setInput] = useState('')
   const [apiKey, setApiKey] = useState(() => sessionStorage.getItem('groq-api-key') ?? '')
+  const [selectedModel, setSelectedModel] = useState(() => {
+    const stored = sessionStorage.getItem('groq-model')
+    return !stored || stored === 'llama-3.3-70b-versatile' ? DEFAULT_GROQ_MODEL : stored
+  })
+  const [models, setModels] = useState<GroqModel[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState('')
+  const [discoveryVersion, setDiscoveryVersion] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
   const endRef = useRef<HTMLDivElement>(null)
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, busy])
-  const runTool = (raw: string) => {
-    const args = JSON.parse(raw) as { action: string; app?: AppId; path?: string; content?: string }
-    const os = useSystemStore.getState()
-    if (!os.assistantControlEnabled) return 'Desktop control is disabled in Privacy & Security settings.'
-    if (args.action === 'open_app' && args.app) { os.openApp(args.app); return `${args.app} opened.` }
-    if (args.action === 'create_file' && args.path) return os.writeFile(args.path, args.content ?? '') ? `Created ${args.path}.` : `Could not create ${args.path}; check that its parent folder exists.`
-    if (args.action === 'create_folder' && args.path) return os.createEntry(args.path, 'folder') ? `Created ${args.path}.` : `Could not create ${args.path}.`
-    if (args.action === 'read_file' && args.path) return os.files[normalizePath(args.path)]?.content ?? 'File not found.'
-    if (args.action === 'list_files') return Object.keys(os.files).join('\n')
-    return 'That action is not available.'
-  }
+  useEffect(() => {
+    const handleVoiceState = (event: Event) => setVoiceEnabled((event as CustomEvent<boolean>).detail)
+    const openVoiceSettings = () => setSettingsOpen(true)
+    const handleVoiceChat = (event: Event) => {
+      const message = (event as CustomEvent<{ role: 'user' | 'assistant'; content: string }>).detail
+      if (message?.content) setMessages((current) => [...current, message])
+    }
+    const queryTimer = window.setTimeout(() => window.dispatchEvent(new Event('mac-voice-query')), 0)
+    window.addEventListener('mac-voice-state', handleVoiceState)
+    window.addEventListener('mac-voice-chat', handleVoiceChat)
+    window.addEventListener('mac-assistant-open-settings', openVoiceSettings)
+    return () => {
+      window.clearTimeout(queryTimer)
+      window.removeEventListener('mac-voice-state', handleVoiceState)
+      window.removeEventListener('mac-voice-chat', handleVoiceChat)
+      window.removeEventListener('mac-assistant-open-settings', openVoiceSettings)
+    }
+  }, [])
+  useEffect(() => { sessionStorage.setItem('groq-model', selectedModel) }, [selectedModel])
+  useEffect(() => {
+    if (!apiKey.trim()) { setModels([]); setModelsError(''); setModelsLoading(false); return }
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      setModelsLoading(true)
+      setModelsError('')
+      try {
+        const response = await fetch('/api/assistant/models', { headers: { 'X-Groq-Api-Key': apiKey }, signal: controller.signal })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error?.message ?? data.error ?? `Model lookup failed (${response.status}).`)
+        const available: GroqModel[] = data.models ?? []
+        setModels(available)
+        if (available.length && !available.some((model) => model.id === selectedModel)) {
+          const preferred = available.find((model) => model.id === DEFAULT_GROQ_MODEL) ?? available.find((model) => model.id.startsWith('qwen/')) ?? available[0]
+          setSelectedModel(preferred.id)
+          sessionStorage.setItem('groq-model', preferred.id)
+        }
+        if (!available.length) setModelsError('No chat models are available for this API key.')
+      } catch (error) {
+        if (!controller.signal.aborted) setModelsError(error instanceof Error ? error.message : 'Could not load models.')
+      } finally {
+        if (!controller.signal.aborted) setModelsLoading(false)
+      }
+    }, 500)
+    return () => { window.clearTimeout(timer); controller.abort() }
+  }, [apiKey, discoveryVersion])
   const send = async (text = input) => {
-    if (!text.trim() || busy) return
+    if (!text.trim() || busyRef.current) return
+    busyRef.current = true
     const nextMessages = [...messages, { role: 'user' as const, content: text.trim() }]
     setMessages(nextMessages); setInput(''); setBusy(true)
-    if (!apiKey) { setMessages((current) => [...current, { role: 'assistant', content: 'Add your Groq API key using the sliders button to start a conversation. Your key is kept only for this browser session.' }]); setBusy(false); return }
+    if (!apiKey) { setMessages((current) => [...current, { role: 'assistant', content: 'Add your Groq API key using the sliders button to start a conversation. Your key is kept only for this browser session.' }]); setBusy(false); busyRef.current = false; return }
     try {
-      const apiMessages: Array<Record<string, unknown>> = [{ role: 'system', content: 'You are Mac Assistant, a thoughtful and concise desktop AI. You can operate this desktop using control_os. Ask before destructive actions. File paths use /Documents, /Desktop, /Downloads, or /Pictures.' }, ...nextMessages]
+      const apiMessages: Array<Record<string, unknown>> = [{ role: 'system', content: 'You are Mac Assistant, a thoughtful and concise desktop AI. You can operate this desktop using control_os. Every system action is carried out visibly by opening apps and using their interfaces; never imply filesystem or app changes happened invisibly. Ask before destructive actions. File paths use /Documents, /Desktop, /Downloads, or /Pictures.' }, ...nextMessages]
+      const completedActions = new Map<string, string>()
       let answer = ''
       for (let turn = 0; turn < 4; turn++) {
-        const response = await fetch('/api/assistant', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Groq-Api-Key': apiKey }, body: JSON.stringify({ model: 'llama-3.3-70b-versatile', messages: apiMessages, tools: assistantTools, tool_choice: 'auto', temperature: 0.7 }) })
+        const response = await fetch('/api/assistant', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Groq-Api-Key': apiKey }, body: JSON.stringify({ model: selectedModel, messages: apiMessages, tools: assistantTools, tool_choice: 'auto', temperature: 0.7 }) })
         const data = await response.json()
         if (!response.ok) throw new Error(data.error?.message ?? data.error ?? `Groq request failed (${response.status}). Check the API key and try again.`)
         const message = data.choices?.[0]?.message
         if (!message) throw new Error('The assistant returned an empty response.')
         if (message.tool_calls?.length) {
           apiMessages.push({ role: 'assistant', content: message.content ?? null, tool_calls: message.tool_calls })
-          for (const call of message.tool_calls) apiMessages.push({ role: 'tool', tool_call_id: call.id, content: runTool(call.function.arguments) })
+          for (const call of message.tool_calls) {
+            let actionKey = call.function.arguments
+            try { actionKey = JSON.stringify(JSON.parse(actionKey)) } catch {}
+            let result: string
+            if (completedActions.has(actionKey)) result = completedActions.get(actionKey) ?? ''
+            else {
+              result = await executeAssistantTool(call.function.arguments)
+              completedActions.set(actionKey, result)
+            }
+            apiMessages.push({ role: 'tool', tool_call_id: call.id, content: result })
+          }
           continue
         }
         answer = message.content ?? ''
@@ -200,8 +270,8 @@ export function AssistantApp() {
       }
       setMessages((current) => [...current, { role: 'assistant', content: answer || 'Done.' }])
     } catch (error) { setMessages((current) => [...current, { role: 'assistant', content: error instanceof Error ? error.message : 'Something went wrong.' }]) }
-    finally { setBusy(false) }
+    finally { setBusy(false); busyRef.current = false }
   }
   const suggestions = ['Organize my desktop', 'Create a notes file', 'Open System Settings']
-  return <div className="assistant-app"><header className="assistant-header"><div className="assistant-brand"><span><Sparkles size={16} /></span><div><strong>Mac Assistant</strong><small>Here when you need me</small></div></div><button title="Settings" onClick={() => setSettingsOpen(!settingsOpen)}><Settings2 size={17} /></button></header>{settingsOpen && <div className="assistant-settings"><label htmlFor="groq-key">Groq API key</label><input id="groq-key" type="password" placeholder="gsk_…" value={apiKey} onChange={(event) => { setApiKey(event.target.value); sessionStorage.setItem('groq-api-key', event.target.value) }} /><small>Sent to Groq through this local server. Never saved on the server.</small></div>}<div className="assistant-messages">{messages.length === 1 && <div className="assistant-welcome"><span className="welcome-orb"><Sparkles size={23} /></span><h2>A little help,<br />right when you need it.</h2><p>Ask a question or tell me what to do on your Mac.</p></div>}{messages.map((message, index) => <div key={index} className={`chat-message ${message.role}`}><span className="message-avatar">{message.role === 'assistant' ? <Sparkles size={13} /> : 'You'}</span><p>{message.content}</p></div>)}{busy && <div className="chat-message assistant"><span className="message-avatar"><Sparkles size={13} /></span><p><LoaderCircle className="spin" size={16} /></p></div>}<div ref={endRef} /></div>{messages.length === 1 && <div className="suggestions">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => send(suggestion)}>{suggestion}<ArrowRight size={12} /></button>)}</div>}<form className="assistant-compose" onSubmit={(event) => { event.preventDefault(); void send() }}><textarea aria-label="Message Mac Assistant" placeholder="Message Mac Assistant…" rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }} /><div><button type="button" title="Help" onClick={() => setSettingsOpen(true)}><CircleHelp size={15} /></button><button className="send-button" title="Send" disabled={busy || !input.trim()}><Send size={15} /></button></div></form><footer className="assistant-disclaimer">Mac Assistant can make mistakes. Review important changes.</footer></div>
+  return <div className="assistant-app"><header className="assistant-header"><div className="assistant-brand"><span><Sparkles size={16} /></span><div><strong>Mac Assistant</strong><small>Here when you need me</small></div></div><div className="assistant-header-actions"><div className="model-control"><select aria-label="Available Groq models" title={modelsError || (modelsLoading ? 'Detecting available models…' : 'Choose a model')} value={selectedModel} disabled={!apiKey || modelsLoading || models.length === 0} onChange={(event) => { setSelectedModel(event.target.value); sessionStorage.setItem('groq-model', event.target.value) }}>{models.length ? models.map((model) => <option key={model.id} value={model.id}>{model.id}</option>) : <option value={selectedModel}>{modelsLoading ? 'Detecting models…' : apiKey ? 'No models found' : 'Add API key'}</option>}</select><button title={modelsError || 'Refresh available models'} aria-label="Refresh available models" disabled={!apiKey || modelsLoading} onClick={() => setDiscoveryVersion((version) => version + 1)}>{modelsLoading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}</button></div><button className={`voice-toggle ${voiceEnabled ? 'active' : ''}`} title={voiceEnabled ? 'Turn off Hey Mac voice control' : 'Turn on Hey Mac voice control'} aria-label="Toggle voice control" aria-pressed={voiceEnabled} onClick={() => window.dispatchEvent(new Event('mac-voice-toggle'))}>{voiceEnabled ? <Mic size={16} /> : <MicOff size={16} />}</button><button title="Settings" aria-label="Assistant settings" onClick={() => setSettingsOpen(!settingsOpen)}><Settings2 size={17} /></button></div></header>{settingsOpen && <div className="assistant-settings"><label htmlFor="groq-key">Groq API key</label><input id="groq-key" type="password" placeholder="gsk_…" value={apiKey} onChange={(event) => { setApiKey(event.target.value); sessionStorage.setItem('groq-api-key', event.target.value) }} /><small>Sent to Groq through this local server. Never saved on the server.</small>{modelsError && <small className="model-error">{modelsError}</small>}</div>}<div className="assistant-messages">{messages.length === 1 && <div className="assistant-welcome"><span className="welcome-orb"><Sparkles size={23} /></span><h2>A little help,<br />right when you need it.</h2><p>Ask a question or tell me what to do on your Mac.</p></div>}{messages.map((message, index) => <div key={index} className={`chat-message ${message.role}`}><span className="message-avatar">{message.role === 'assistant' ? <Sparkles size={13} /> : 'You'}</span><p>{message.content}</p></div>)}{busy && <div className="chat-message assistant"><span className="message-avatar"><Sparkles size={13} /></span><p><LoaderCircle className="spin" size={16} /></p></div>}<div ref={endRef} /></div>{messages.length === 1 && <div className="suggestions">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => send(suggestion)}>{suggestion}<ArrowRight size={12} /></button>)}</div>}<form className="assistant-compose" onSubmit={(event) => { event.preventDefault(); void send() }}><textarea aria-label="Message Mac Assistant" placeholder="Message Mac Assistant…" rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }} /><div><button type="button" title="Help" onClick={() => setSettingsOpen(true)}><CircleHelp size={15} /></button><button className="send-button" title="Send" disabled={busy || !input.trim()}><Send size={15} /></button></div></form><footer className="assistant-disclaimer">Mac Assistant can make mistakes. Review important changes.</footer></div>
 }
