@@ -13,6 +13,8 @@ Open the Vite URL shown in the terminal. To install the PWA locally, run `npm ru
 
 Mac Assistant defaults to Groq's `qwen/qwen3-32b` tool-capable chat model, discovers the models available to your key, and sends requests through the local Express `/api/assistant` route to avoid browser CORS failures. Add a Groq API key in the assistant's settings; it is held in session storage and forwarded per request, never persisted by the backend. Do not use a shared or untrusted browser profile for API keys.
 
+Use the screen icon in the menu bar to ask Mac Assistant to analyze a shared screen, window, or tab. The browser displays its normal share picker; the app captures and sends one downscaled frame to an available vision-capable Groq model, then immediately stops the capture. Screen sharing is never kept running in the background.
+
 Hey Mac voice control requires microphone permission and a browser with Web Speech recognition support. The first-run desktop callout explains the wake phrase and enables listening. Once enabled, it listens while the app or installed PWA is open; browser security does not allow a website to listen outside its own running page or after it is closed. The top menu bar's microphone button is push-to-talk: press and hold to record, then release to send the audio to Groq Whisper for transcription and command handling. Assistant actions animate a labeled cursor through Dock, Finder, and TextEdit controls instead of mutating files behind the interface. Spoken file and app commands operate on Mac-NO-S's virtual filesystem and desktop, not the host computer's shell or arbitrary host files.
 
 ## Implementation roadmap

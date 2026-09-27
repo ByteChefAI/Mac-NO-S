@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Cloud, FilePlus2, Folder, FolderPlus, Globe, Grid2X2, LoaderCircle, LockKeyhole, Mic, MicOff, MoreHorizontal, Plus, RefreshCw, Save, Search, Send, Settings2, ShieldAlert, Sidebar, Sparkles, Trash2, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Cloud, FilePlus2, Folder, FolderPlus, Globe, Grid2X2, LoaderCircle, LockKeyhole, Mic, MicOff, MonitorUp, MoreHorizontal, Plus, RefreshCw, Save, Search, Send, Settings2, ShieldAlert, Sidebar, Sparkles, Trash2, Wifi, X } from 'lucide-react'
 import { useSystemStore, normalizePath } from '../system/store'
 import type { FsEntry } from '../system/types'
 import { assistantTools, DEFAULT_GROQ_MODEL, executeAssistantTool } from './assistantTools'
@@ -169,7 +169,16 @@ export function SafariApp() {
   return <div className="safari-app"><div className="safari-toolbar"><button title="Show sidebar" onClick={() => setShowSidebar(!showSidebar)}><Sidebar size={16} /></button><div className="safari-nav"><button title="Back" disabled={index === 0} onClick={() => go(index - 1)}><ArrowLeft size={15} /></button><button title="Forward" disabled={index >= history.length - 1} onClick={() => go(index + 1)}><ArrowRight size={15} /></button></div><form className="address-bar" onSubmit={(event) => { event.preventDefault(); navigate(address) }}><LockKeyhole size={12} /><input aria-label="Website address" value={address} onChange={(event) => setAddress(event.target.value)} onFocus={(event) => event.currentTarget.select()} /><button type="button" aria-label="Reload" title="Reload" onClick={() => { setLoading(true); setFailed(false); setRefreshKey((key) => key + 1) }}><RefreshCw size={13} /></button></form><button title="New tab" onClick={() => navigate('https://example.com')}><Plus size={16} /></button><button title="More"><MoreHorizontal size={17} /></button></div><div className="safari-tabs"><span className="safari-tab"><Globe size={12} />{new URL(page).hostname}<button title="Close tab"><X size={11} /></button></span><button title="New tab" onClick={() => navigate('https://example.com')}><Plus size={13} /></button></div><div className="safari-viewport">{showSidebar && <aside className="safari-sidebar"><strong>Favorites</strong><button onClick={() => navigate('https://example.com')}>Example</button><button onClick={() => navigate('https://developer.mozilla.org')}>MDN</button><button onClick={() => navigate('https://wikipedia.org')}>Wikipedia</button></aside>}<iframe key={`${page}-${refreshKey}`} title="Safari web content" src={src} sandbox="allow-scripts allow-forms allow-popups" onLoad={() => { setLoading(false); setFailed(false) }} onError={() => { setLoading(false); setFailed(true) }} />{loading && <div className="safari-loading"><LoaderCircle size={20} className="spin" /> Loading {new URL(page).hostname}…</div>}{failed && <div className="safari-error"><ShieldAlert size={27} /><strong>Safari can’t open this page</strong><span>Start the optional proxy service with <code>npm run server</code>.</span></div>}</div><footer className="safari-status"><span><LockKeyhole size={10} /> Private browsing</span><span>{new URL(page).hostname}</span></footer></div>
 }
 
-type GroqModel = { id: string; contextWindow?: number }
+type GroqModel = { id: string; contextWindow?: number; vision?: boolean }
+
+function blobAsDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('The screen image could not be prepared.'))
+    reader.onerror = () => reject(new Error('The screen image could not be prepared.'))
+    reader.readAsDataURL(blob)
+  })
+}
 
 export function AssistantApp() {
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([{ role: 'assistant', content: 'Good afternoon. What can I help you with?' }])
@@ -196,14 +205,20 @@ export function AssistantApp() {
       const message = (event as CustomEvent<{ role: 'user' | 'assistant'; content: string }>).detail
       if (message?.content) setMessages((current) => [...current, message])
     }
+    const handleScreenAnalyze = (event: Event) => { void analyzeScreen((event as CustomEvent<MediaStream>).detail) }
+    const handleScreenError = (event: Event) => setMessages((current) => [...current, { role: 'assistant', content: (event as CustomEvent<string>).detail }])
     const queryTimer = window.setTimeout(() => window.dispatchEvent(new Event('mac-voice-query')), 0)
     window.addEventListener('mac-voice-state', handleVoiceState)
     window.addEventListener('mac-voice-chat', handleVoiceChat)
+    window.addEventListener('mac-assistant-analyze-screen', handleScreenAnalyze)
+    window.addEventListener('mac-assistant-screen-error', handleScreenError)
     window.addEventListener('mac-assistant-open-settings', openVoiceSettings)
     return () => {
       window.clearTimeout(queryTimer)
       window.removeEventListener('mac-voice-state', handleVoiceState)
       window.removeEventListener('mac-voice-chat', handleVoiceChat)
+      window.removeEventListener('mac-assistant-analyze-screen', handleScreenAnalyze)
+      window.removeEventListener('mac-assistant-screen-error', handleScreenError)
       window.removeEventListener('mac-assistant-open-settings', openVoiceSettings)
     }
   }, [])
@@ -271,6 +286,90 @@ export function AssistantApp() {
       setMessages((current) => [...current, { role: 'assistant', content: answer || 'Done.' }])
     } catch (error) { setMessages((current) => [...current, { role: 'assistant', content: error instanceof Error ? error.message : 'Something went wrong.' }]) }
     finally { setBusy(false); busyRef.current = false }
+  }
+  const analyzeScreen = async (grantedStream?: MediaStream) => {
+    const stopGrantedStream = () => grantedStream?.getTracks().forEach((track) => track.stop())
+    if (busyRef.current) { stopGrantedStream(); return }
+    if (!apiKey) {
+      stopGrantedStream()
+      setSettingsOpen(true)
+      setMessages((current) => [...current, { role: 'assistant', content: 'Add your Groq API key in settings before analyzing a screen.' }])
+      return
+    }
+    const visionModel = models.find((model) => model.id === selectedModel && model.vision) ?? models.find((model) => model.vision)
+    if (!visionModel) {
+      stopGrantedStream()
+      setMessages((current) => [...current, { role: 'assistant', content: 'No vision-capable Groq model is available for this API key. Refresh the model list or try another key.' }])
+      return
+    }
+
+    busyRef.current = true
+    setBusy(true)
+    let stream: MediaStream | null = null
+    let video: HTMLVideoElement | null = null
+    try {
+      stream = grantedStream ?? await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false })
+      video = document.createElement('video')
+      video.muted = true
+      video.playsInline = true
+      video.srcObject = stream
+      await new Promise<void>((resolve, reject) => {
+        video!.onloadedmetadata = () => resolve()
+        video!.onerror = () => reject(new Error('The selected screen could not be read.'))
+      })
+      await video.play()
+      const scale = Math.min(1, 1280 / video.videoWidth)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+      canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const image = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('The screen image could not be encoded.')), 'image/jpeg', 0.65))
+      stream.getTracks().forEach((track) => track.stop())
+      stream = null
+      video.pause()
+      video.srcObject = null
+      const imageUrl = await blobAsDataUrl(image)
+      if (imageUrl.length > 3_500_000) throw new Error('This screen image is too large to send. Try sharing a smaller window.')
+      const question = input.trim() || 'Describe what is visible on my screen and point out anything that needs attention.'
+      setInput('')
+      setMessages((current) => [...current, { role: 'user', content: `[Screen analysis] ${question}` }])
+      const apiMessages: Array<Record<string, unknown>> = [
+        { role: 'system', content: 'You are Mac Assistant. Analyze the user-approved screen capture carefully. Be concise and distinguish visible facts from guesses. If the user asks for an action, use control_os and carry it out visibly through the app UI. Never claim you can see beyond this single captured image.' },
+        { role: 'user', content: [{ type: 'text', text: question }, { type: 'image_url', image_url: { url: imageUrl } }] },
+      ]
+      const completedActions = new Map<string, string>()
+      let answer = ''
+      for (let turn = 0; turn < 4; turn++) {
+        const response = await fetch('/api/assistant', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Groq-Api-Key': apiKey }, body: JSON.stringify({ model: visionModel.id, messages: apiMessages, tools: assistantTools, tool_choice: 'auto', temperature: 0.4 }) })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error?.message ?? data.error ?? `Screen analysis failed (${response.status}).`)
+        const message = data.choices?.[0]?.message
+        if (!message) throw new Error('The vision model returned an empty response.')
+        if (message.tool_calls?.length) {
+          apiMessages.push({ role: 'assistant', content: message.content ?? null, tool_calls: message.tool_calls })
+          for (const call of message.tool_calls) {
+            let actionKey = call.function.arguments
+            try { actionKey = JSON.stringify(JSON.parse(actionKey)) } catch {}
+            let result: string
+            if (completedActions.has(actionKey)) result = completedActions.get(actionKey) ?? ''
+            else { result = await executeAssistantTool(call.function.arguments); completedActions.set(actionKey, result) }
+            apiMessages.push({ role: 'tool', tool_call_id: call.id, content: result })
+          }
+          continue
+        }
+        answer = message.content ?? ''
+        break
+      }
+      setMessages((current) => [...current, { role: 'assistant', content: `${answer || 'I could not analyze that screen.'} (Analyzed with ${visionModel.id})` }])
+    } catch (error) {
+      const message = error instanceof Error && error.name === 'NotAllowedError' ? 'Screen sharing was canceled.' : error instanceof Error ? error.message : 'Screen analysis failed.'
+      setMessages((current) => [...current, { role: 'assistant', content: message }])
+    } finally {
+      stream?.getTracks().forEach((track) => track.stop())
+      if (video) { video.pause(); video.srcObject = null }
+      setBusy(false)
+      busyRef.current = false
+    }
   }
   const suggestions = ['Organize my desktop', 'Create a notes file', 'Open System Settings']
   return <div className="assistant-app"><header className="assistant-header"><div className="assistant-brand"><span><Sparkles size={16} /></span><div><strong>Mac Assistant</strong><small>Here when you need me</small></div></div><div className="assistant-header-actions"><div className="model-control"><select aria-label="Available Groq models" title={modelsError || (modelsLoading ? 'Detecting available models…' : 'Choose a model')} value={selectedModel} disabled={!apiKey || modelsLoading || models.length === 0} onChange={(event) => { setSelectedModel(event.target.value); sessionStorage.setItem('groq-model', event.target.value) }}>{models.length ? models.map((model) => <option key={model.id} value={model.id}>{model.id}</option>) : <option value={selectedModel}>{modelsLoading ? 'Detecting models…' : apiKey ? 'No models found' : 'Add API key'}</option>}</select><button title={modelsError || 'Refresh available models'} aria-label="Refresh available models" disabled={!apiKey || modelsLoading} onClick={() => setDiscoveryVersion((version) => version + 1)}>{modelsLoading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}</button></div><button className={`voice-toggle ${voiceEnabled ? 'active' : ''}`} title={voiceEnabled ? 'Turn off Hey Mac voice control' : 'Turn on Hey Mac voice control'} aria-label="Toggle voice control" aria-pressed={voiceEnabled} onClick={() => window.dispatchEvent(new Event('mac-voice-toggle'))}>{voiceEnabled ? <Mic size={16} /> : <MicOff size={16} />}</button><button title="Settings" aria-label="Assistant settings" onClick={() => setSettingsOpen(!settingsOpen)}><Settings2 size={17} /></button></div></header>{settingsOpen && <div className="assistant-settings"><label htmlFor="groq-key">Groq API key</label><input id="groq-key" type="password" placeholder="gsk_…" value={apiKey} onChange={(event) => { setApiKey(event.target.value); sessionStorage.setItem('groq-api-key', event.target.value) }} /><small>Sent to Groq through this local server. Never saved on the server.</small>{modelsError && <small className="model-error">{modelsError}</small>}</div>}<div className="assistant-messages">{messages.length === 1 && <div className="assistant-welcome"><span className="welcome-orb"><Sparkles size={23} /></span><h2>A little help,<br />right when you need it.</h2><p>Ask a question or tell me what to do on your Mac.</p></div>}{messages.map((message, index) => <div key={index} className={`chat-message ${message.role}`}><span className="message-avatar">{message.role === 'assistant' ? <Sparkles size={13} /> : 'You'}</span><p>{message.content}</p></div>)}{busy && <div className="chat-message assistant"><span className="message-avatar"><Sparkles size={13} /></span><p><LoaderCircle className="spin" size={16} /></p></div>}<div ref={endRef} /></div>{messages.length === 1 && <div className="suggestions">{suggestions.map((suggestion) => <button key={suggestion} onClick={() => send(suggestion)}>{suggestion}<ArrowRight size={12} /></button>)}</div>}<form className="assistant-compose" onSubmit={(event) => { event.preventDefault(); void send() }}><textarea aria-label="Message Mac Assistant" placeholder="Message Mac Assistant…" rows={1} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } }} /><div><button type="button" title="Help" onClick={() => setSettingsOpen(true)}><CircleHelp size={15} /></button><button className="send-button" title="Send" disabled={busy || !input.trim()}><Send size={15} /></button></div></form><footer className="assistant-disclaimer">Mac Assistant can make mistakes. Review important changes.</footer></div>

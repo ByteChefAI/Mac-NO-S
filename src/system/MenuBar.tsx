@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Apple, BatteryFull, Bluetooth, ChevronDown, Command, Mic, Moon, Search, SlidersHorizontal, Wifi } from 'lucide-react'
+import { Apple, BatteryFull, Bluetooth, ChevronDown, Command, Mic, MonitorUp, Moon, Search, SlidersHorizontal, Wifi } from 'lucide-react'
 import { useSystemStore } from './store'
 import { appNames, type AppId } from './types'
 
@@ -10,6 +10,7 @@ export function MenuBar() {
   const [controlOpen, setControlOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [pttRecording, setPttRecording] = useState(false)
+  const screenCapturePending = useRef(false)
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 15000); return () => window.clearInterval(timer) }, [])
   useEffect(() => {
     const handlePttState = (event: Event) => setPttRecording((event as CustomEvent<boolean>).detail)
@@ -17,6 +18,31 @@ export function MenuBar() {
     return () => window.removeEventListener('mac-ptt-state', handlePttState)
   }, [])
   const activeName = activeApp ? appNames[activeApp] : 'Finder'
+  const analyzeScreen = () => {
+    if (screenCapturePending.current) return
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      window.dispatchEvent(new CustomEvent('mac-assistant-screen-error', { detail: 'Screen sharing is not supported in this browser.' }))
+      useSystemStore.getState().openApp('assistant')
+      return
+    }
+    try {
+      screenCapturePending.current = true
+      const capture = navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: false })
+      useSystemStore.getState().openApp('assistant')
+      void capture.then((stream) => {
+        screenCapturePending.current = false
+        window.dispatchEvent(new CustomEvent('mac-assistant-analyze-screen', { detail: stream }))
+      }).catch((error: unknown) => {
+        screenCapturePending.current = false
+        const message = error instanceof Error && error.name === 'NotAllowedError' ? 'Screen sharing was canceled.' : 'The selected screen could not be shared.'
+        window.dispatchEvent(new CustomEvent('mac-assistant-screen-error', { detail: message }))
+      })
+    } catch {
+      screenCapturePending.current = false
+      window.dispatchEvent(new CustomEvent('mac-assistant-screen-error', { detail: 'The screen share picker could not be opened.' }))
+      useSystemStore.getState().openApp('assistant')
+    }
+  }
 
   return (
     <header className="menubar">
@@ -31,6 +57,7 @@ export function MenuBar() {
       </div>
       <div className="menu-right">
         <button title={`Wi-Fi ${wifiEnabled ? 'on' : 'off'}`} onClick={() => updatePreferences({ wifiEnabled: !wifiEnabled })}><Wifi size={15} /></button><button title={`Bluetooth ${bluetoothEnabled ? 'on' : 'off'}`} onClick={() => updatePreferences({ bluetoothEnabled: !bluetoothEnabled })}><Bluetooth size={14} /></button><button title="Battery"><BatteryFull size={17} /></button>
+        <button title="Analyze screen with Mac Assistant" aria-label="Analyze screen" onClick={analyzeScreen}><MonitorUp size={15} /></button>
         <button title="Spotlight" onClick={() => useSystemStore.getState().openApp('assistant')}><Search size={15} /></button>
         <button className={`menubar-ptt ${pttRecording ? 'recording' : ''}`} title={pttRecording ? 'Release to send your recording' : 'Touch and hold to record a command'} aria-label={pttRecording ? 'Recording; release to send' : 'Hold to record a voice command'} aria-pressed={pttRecording} onPointerDown={(event) => { if (event.button !== 0) return; event.preventDefault(); window.dispatchEvent(new Event('mac-ptt-start')) }} onPointerUp={() => window.dispatchEvent(new Event('mac-ptt-end'))} onPointerCancel={() => window.dispatchEvent(new Event('mac-ptt-end'))} onKeyDown={(event) => { if ((event.code === 'Space' || event.code === 'Enter') && !event.repeat) { event.preventDefault(); window.dispatchEvent(new Event('mac-ptt-start')) } }} onKeyUp={(event) => { if (event.code === 'Space' || event.code === 'Enter') window.dispatchEvent(new Event('mac-ptt-end')) }} onContextMenu={(event) => event.preventDefault()}><Mic size={15} /></button>
         <button className="control-trigger" title="Control Center" onClick={() => setControlOpen(!controlOpen)}><SlidersHorizontal size={15} /><ChevronDown size={10} /></button>

@@ -336,6 +336,7 @@ export function VoiceControl() {
         if (!transcript) throw new Error('I did not hear a command. Please try again.')
         transcriptionInFlight = false
         await handleRequest(transcript)
+        if (manualSession && !requestInFlight) releaseManualSession()
       } catch (error) {
         transcriptionInFlight = false
         const message = error instanceof Error ? error.message : 'I could not transcribe that recording.'
@@ -350,6 +351,8 @@ export function VoiceControl() {
     const beginRecording = async () => {
       if (pttStarting || recording || requestInFlight) return
       if (!sessionStorage.getItem('groq-api-key')) {
+        pttHeld = false
+        announcePtt(false)
         window.dispatchEvent(new CustomEvent('mac-voice-settings-required'))
         window.dispatchEvent(new CustomEvent('mac-voice-chat', { detail: { role: 'assistant', content: 'Add your Groq API key in Mac Assistant settings before using push to talk.' } }))
         return

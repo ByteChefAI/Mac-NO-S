@@ -5,7 +5,7 @@ import { isIP } from 'node:net'
 const app = express()
 const port = Number(process.env.PROXY_PORT ?? 3001)
 const maxBytes = 12 * 1024 * 1024
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({ limit: '4mb' }))
 
 function isPrivateAddress(address: string) {
   const version = isIP(address)
@@ -33,12 +33,55 @@ function proxyUrl(url: URL) {
 function rewriteCss(css: string, base: URL) {
   const rewrite = (value: string) => {
     const url = value.trim()
+    if (url.startsWith('/api/proxy?url=')) return url
     if (!url || /^(?:data:|#|blob:|javascript:)/i.test(url)) return url
     try { return proxyUrl(new URL(url, base)) } catch { return '' }
   }
   return css
-    .replace(/url\(\s*(?:(["'])(.*?)\1|([^)]*?))\s*\)/gi, (_match, _quote: string, quoted: string, bare: string) => `url("${rewrite(quoted ?? bare ?? '')}")`)
     .replace(/@import\s+(?:url\(\s*)?(?:(["'])(.*?)\1|([^\s;)]+))\s*\)?/gi, (_match, _quote: string, quoted: string, bare: string) => `@import url("${rewrite(quoted ?? bare ?? '')}")`)
+    .replace(/url\(\s*(?:(["'])(.*?)\1|([^)]*?))\s*\)/gi, (_match, _quote: string, quoted: string, bare: string) => `url("${rewrite(quoted ?? bare ?? '')}")`)
+}
+
+function proxyBootstrap(base: URL) {
+  const script = `(function(){
+    var base=${JSON.stringify(base.href)};
+    function proxy(value){
+      var text=String(value||'');
+      if(/^(?:data:|blob:|javascript:|mailto:|tel:|#)/i.test(text)||text.indexOf('/api/proxy?url=')===0)return text;
+      try{return '/api/proxy?url='+encodeURIComponent(new URL(text,base).href)}catch(_){return text}
+    }
+    function rewriteCss(value){
+      return String(value)
+        .replace(/@import\\s+(?:url\\(\\s*)?(["']?)([^"')\\s;]+)\\1\\s*\\)?/gi,function(_,q,url){return '@import url("'+proxy(url)+'")'})
+        .replace(/url\\(\\s*(["']?)(.*?)\\1\\s*\\)/gi,function(_,q,url){return 'url("'+proxy(url)+'")'})
+    }
+    var oldFetch=window.fetch.bind(window);
+    window.fetch=function(input,init){var target=input instanceof Request?new Request(proxy(input.url),input):proxy(input);return oldFetch(target,init)};
+    var oldOpen=XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open=function(method,url){return oldOpen.apply(this,[method,proxy(url)].concat(Array.prototype.slice.call(arguments,2)))};
+    var oldSet=Element.prototype.setAttribute;
+    Element.prototype.setAttribute=function(name,value){
+      var key=String(name).toLowerCase(),text=String(value);
+      if(key==='style')text=rewriteCss(text);
+      else if(/^(?:src|href|action|poster|data)$/.test(key))text=proxy(text);
+      else if(key==='srcset'&&!/^\\s*data:/i.test(text))text=text.split(',').map(function(item){var match=item.trim().match(/^(\\S+)(\\s+.*)?$/);return match?proxy(match[1])+(match[2]||''):item}).join(', ');
+      return oldSet.call(this,name,text)
+    };
+    var oldRule=CSSStyleSheet.prototype.insertRule;
+    CSSStyleSheet.prototype.insertRule=function(rule,index){return oldRule.call(this,rewriteCss(rule),index)};
+    var oldReplace=CSSStyleSheet.prototype.replace;
+    if(oldReplace)CSSStyleSheet.prototype.replace=function(text){return oldReplace.call(this,rewriteCss(text))};
+    var oldReplaceSync=CSSStyleSheet.prototype.replaceSync;
+    if(oldReplaceSync)CSSStyleSheet.prototype.replaceSync=function(text){return oldReplaceSync.call(this,rewriteCss(text))};
+    var observer=new MutationObserver(function(records){records.forEach(function(record){
+      if(record.type==='attributes'){
+        var value=record.target.getAttribute(record.attributeName);
+        if(value!==null){var key=record.attributeName.toLowerCase(),next=key==='style'?rewriteCss(value):/^(?:src|href|action|poster|data)$/.test(key)?proxy(value):value;if(next!==value)oldSet.call(record.target,record.attributeName,next)}
+      }else record.addedNodes.forEach(function(node){if(node.nodeType===1){var element=node;if(element.tagName==='STYLE')element.textContent=rewriteCss(element.textContent);['src','href','action','poster','data','srcset','style'].forEach(function(key){var value=element.getAttribute(key);if(value!==null)element.setAttribute(key,value)});element.querySelectorAll('style').forEach(function(style){style.textContent=rewriteCss(style.textContent)});element.querySelectorAll('[src],[href],[action],[poster],[data],[srcset],[style]').forEach(function(child){['src','href','action','poster','data','srcset','style'].forEach(function(key){var value=child.getAttribute(key);if(value!==null)child.setAttribute(key,value)})})}})
+    })});
+    observer.observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['src','href','action','poster','data','srcset','style']})
+  })();`
+  return `<script>${script}</script>`
 }
 
 function rewriteHtml(html: string, base: URL) {
@@ -53,6 +96,7 @@ function rewriteHtml(html: string, base: URL) {
 
   return html
     .replace(/<meta\b[^>]*http-equiv\s*=\s*(["'])content-security-policy\1[^>]*>/gi, '')
+    .replace(/\s+integrity\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/<base\b[^>]*>/gi, '')
     .replace(/\b(href|src|action|poster|data|srcset|style)\s*=\s*(?:(["'])(.*?)\2|([^\s>]+))/gi, (_match, attribute: string, quote: string | undefined, quoted: string | undefined, bare: string | undefined) => {
       const value = quoted ?? bare ?? ''
@@ -60,7 +104,7 @@ function rewriteHtml(html: string, base: URL) {
       return `${attribute}="${rewritten}"`
     })
     .replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_match, attributes: string, css: string) => `<style${attributes}>${rewriteCss(css, base)}</style>`)
-    .replace(/<head(\s[^>]*)?>/i, (head) => `${head}<meta name="referrer" content="no-referrer">`)
+    .replace(/<head(\s[^>]*)?>/i, (head) => `${head}<meta name="referrer" content="no-referrer">${proxyBootstrap(base)}`)
 }
 
 app.post('/api/assistant', async (request, response) => {
@@ -137,7 +181,7 @@ app.get('/api/proxy', async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Cache-Control', 'no-store')
     response.setHeader('Referrer-Policy', 'no-referrer')
-    if (/^(?:font\/|application\/(?:font-|x-font-|vnd\.ms-fontobject))/i.test(contentType)) {
+    if (request.get('origin') === 'null') {
       response.setHeader('Access-Control-Allow-Origin', 'null')
       response.setHeader('Vary', 'Origin')
     }
@@ -164,7 +208,11 @@ app.get('/api/assistant/models', async (request, response) => {
     if (!upstream.ok) { response.status(upstream.status).json(data); return }
     const models = (Array.isArray(data.data) ? data.data : [])
       .filter((model: { id?: unknown; active?: unknown }) => typeof model.id === 'string' && model.active !== false && !/(?:whisper|embed|guard|tts|audio)/i.test(model.id))
-      .map((model: { id: string; context_window?: number }) => ({ id: model.id, contextWindow: model.context_window }))
+      .map((model: { id: string; context_window?: number }) => ({
+        id: model.id,
+        contextWindow: model.context_window,
+        vision: /(?:vision|scout|maverick|llava|qwen.*vl)/i.test(model.id),
+      }))
       .sort((first: { id: string }, second: { id: string }) => first.id.localeCompare(second.id))
     response.json({ models })
   } catch (error) {
