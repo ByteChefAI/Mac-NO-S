@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Mic, X } from 'lucide-react'
 import { assistantTools, DEFAULT_GROQ_MODEL, executeAssistantTool } from '../apps/assistantTools'
 import { useSystemStore } from './store'
+import { showOSAlert } from './dialogs'
+import { playAssistantBlup } from './sounds'
 
 type VoiceStatus = 'ready' | 'wake' | 'recording' | 'processing' | 'speaking' | 'error'
 type SpeechResult = { isFinal: boolean; 0: { transcript: string } }
@@ -83,6 +85,7 @@ export function VoiceControl() {
     }
 
     const reportEnabled = () => announceEnabled(active)
+    const previewBlup = () => playAssistantBlup()
     const announcePtt = (value: boolean) => window.dispatchEvent(new CustomEvent('mac-ptt-state', { detail: value }))
     const requestAssistantSettings = () => {
       useSystemStore.getState().openApp('assistant')
@@ -268,6 +271,7 @@ export function VoiceControl() {
             if (!transcript) continue
             const hasWakeWord = /\bhey\s+mac\b/i.test(transcript)
             if (hasWakeWord) {
+              playAssistantBlup()
               setVoiceStatus('wake')
               if (result.isFinal) {
                 const command = commandFromTranscript(transcript)
@@ -282,7 +286,7 @@ export function VoiceControl() {
         next.onerror = (event) => {
           if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
             stop()
-            window.alert('Allow microphone access for Mac-NO-S to use Hey Mac voice control.')
+            void showOSAlert('Microphone Access', 'Allow microphone access for Mac-NO-S to use Hey Mac voice control.')
           }
         }
         next.onend = () => {
@@ -299,7 +303,7 @@ export function VoiceControl() {
       starting = true
       if (!navigator.mediaDevices?.getUserMedia || !getSpeechRecognition()) {
         starting = false
-        window.alert('Voice control requires a supported browser, a secure connection, and microphone access.')
+        void showOSAlert('Voice Control Unavailable', 'Voice control requires a supported browser, a secure connection, and microphone access.')
         return
       }
       try {
@@ -309,13 +313,14 @@ export function VoiceControl() {
         awaitingCommand = false
         setEnabled(true)
         setVoiceStatus('ready')
+        playAssistantBlup()
         announceEnabled(true)
         scheduleRecognition()
       } catch {
         stream?.getTracks().forEach((track) => track.stop())
         stream = null
         starting = false
-        window.alert('Microphone access was not granted. Enable it in your browser settings and try again.')
+        void showOSAlert('Microphone Access', 'Microphone access was not granted. Enable it in your browser settings and try again.')
       }
       starting = false
     }
@@ -398,6 +403,7 @@ export function VoiceControl() {
       if (pttHeld || pttStarting || recording || requestInFlight || transcriptionInFlight) return
       pttHeld = true
       announcePtt(true)
+      playAssistantBlup()
       void beginRecording()
     }
 
@@ -422,6 +428,7 @@ export function VoiceControl() {
     window.addEventListener('blur', endPtt)
     window.addEventListener('mac-voice-query', reportEnabled)
     window.addEventListener('mac-voice-settings-required', requestAssistantSettings)
+    window.addEventListener('mac-assistant-blup', previewBlup)
     return () => {
       window.removeEventListener('mac-voice-toggle', toggle)
       window.removeEventListener('mac-ptt-start', startPtt)
@@ -431,6 +438,7 @@ export function VoiceControl() {
       window.removeEventListener('blur', endPtt)
       window.removeEventListener('mac-voice-query', reportEnabled)
       window.removeEventListener('mac-voice-settings-required', requestAssistantSettings)
+      window.removeEventListener('mac-assistant-blup', previewBlup)
       stop()
     }
   }, [])

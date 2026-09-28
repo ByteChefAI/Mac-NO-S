@@ -9,6 +9,13 @@ import './pwa-assistant.css'
 import './voice.css'
 import './assistant-cursor.css'
 import './voice-onboarding.css'
+import './system-overlays.css'
+import './safari-workflows.css'
+import './weather-widget.css'
+import './app-workflows.css'
+import './os-dialogs.css'
+import './genie-minimize.css'
+import './system-preferences.css'
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {

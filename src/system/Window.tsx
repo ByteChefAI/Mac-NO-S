@@ -1,4 +1,4 @@
-import { useRef, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, type PointerEvent, type ReactNode } from 'react'
 import { Maximize2, Minus, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useSystemStore } from './store'
@@ -7,14 +7,30 @@ import { appNames, type AppId, type WindowFrame } from './types'
 interface Props { id: AppId; children: ReactNode }
 
 export function Window({ id, children }: Props) {
-  const { windowState, active, focusApp, closeApp, minimizeApp, toggleMaximize, updateFrame } = useSystemStore(useShallow((state) => ({
-    windowState: state.windows[id], active: state.activeApp === id, focusApp: state.focusApp, closeApp: state.closeApp,
+  const { windowState, active, visible, focusApp, closeApp, minimizeApp, finishMinimizeApp, toggleMaximize, updateFrame, tileWindow } = useSystemStore(useShallow((state) => ({
+    windowState: state.windows[id], active: state.activeApp === id, visible: (state.windowSpaces[id] ?? state.spaces[0].id) === state.activeSpaceId, focusApp: state.focusApp, closeApp: state.closeApp,
     minimizeApp: state.minimizeApp, toggleMaximize: state.toggleMaximize, updateFrame: state.updateFrame,
+    finishMinimizeApp: state.finishMinimizeApp,
+    tileWindow: state.tileWindow,
   })))
+  const windowRef = useRef<HTMLElement>(null)
   const drag = useRef<{ x: number; y: number; frame: WindowFrame } | null>(null)
   const resize = useRef<{ x: number; y: number; frame: WindowFrame; edge: string } | null>(null)
 
-  if (!windowState.open || windowState.minimized) return null
+  useEffect(() => {
+    if (!windowState.minimizing || !windowRef.current) return
+    const bounds = windowRef.current.getBoundingClientRect()
+    const dockIcon = document.querySelector<HTMLElement>(`[data-dock-app="${id}"]`)
+    const target = dockIcon?.getBoundingClientRect()
+    const targetX = target ? target.left + target.width / 2 : window.innerWidth / 2
+    const targetY = target ? target.top + target.height / 2 : window.innerHeight - 35
+    windowRef.current.style.setProperty('--minimize-x', `${targetX - (bounds.left + bounds.width / 2)}px`)
+    windowRef.current.style.setProperty('--minimize-y', `${targetY - (bounds.top + bounds.height / 2)}px`)
+    const timer = window.setTimeout(() => finishMinimizeApp(id), 540)
+    return () => window.clearTimeout(timer)
+  }, [finishMinimizeApp, id, windowState.minimizing])
+
+  if (!windowState.open || windowState.minimized || !visible) return null
 
   const startDrag = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || windowState.maximized || (event.target as HTMLElement).closest('button')) return
@@ -49,9 +65,21 @@ export function Window({ id, children }: Props) {
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
+  const finishPointer = (event: PointerEvent<HTMLDivElement>) => {
+    if (drag.current) {
+      const frame = useSystemStore.getState().windows[id].frame
+      const moved = Math.abs(event.clientX - drag.current.x) + Math.abs(event.clientY - drag.current.y) > 5
+      if (moved && event.clientY <= 34) toggleMaximize(id)
+      else if (moved && frame.x <= 8) tileWindow(id, 'left')
+      else if (moved && frame.x + frame.width >= window.innerWidth - 8) tileWindow(id, 'right')
+    }
+    drag.current = null
+    resize.current = null
+  }
+
   return (
-    <section data-window-app={id} className={`os-window ${active ? 'is-active' : ''} ${windowState.maximized ? 'is-maximized' : ''}`} style={{ ...(windowState.maximized ? {} : { left: windowState.frame.x, top: windowState.frame.y, width: windowState.frame.width, height: windowState.frame.height }), zIndex: windowState.zIndex }} onPointerDown={() => focusApp(id)}>
-      <div className="window-titlebar" onPointerDown={startDrag} onPointerMove={move} onPointerUp={() => { drag.current = null; resize.current = null }} onDoubleClick={() => toggleMaximize(id)}>
+    <section ref={windowRef} data-window-app={id} className={`os-window ${active ? 'is-active' : ''} ${windowState.maximized ? 'is-maximized' : ''} ${windowState.minimizing ? 'is-minimizing' : ''}`} style={{ ...(windowState.maximized ? {} : { left: windowState.frame.x, top: windowState.frame.y, width: windowState.frame.width, height: windowState.frame.height }), zIndex: windowState.zIndex }} onPointerDown={() => focusApp(id)} onAnimationEnd={(event) => { if (event.target === event.currentTarget && event.animationName === 'genie-minimize') finishMinimizeApp(id) }}>
+      <div className="window-titlebar" onPointerDown={startDrag} onPointerMove={move} onPointerUp={finishPointer} onDoubleClick={() => toggleMaximize(id)}>
         <div className="traffic-lights">
           <button className="traffic close" title="Close" aria-label={`Close ${appNames[id]}`} onClick={() => closeApp(id)}><X size={9} /></button>
           <button className="traffic minimize" title="Minimize" aria-label="Minimize" onClick={() => minimizeApp(id)}><Minus size={9} /></button>

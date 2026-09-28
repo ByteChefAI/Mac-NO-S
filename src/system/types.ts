@@ -1,4 +1,4 @@
-export type AppId = 'finder' | 'safari' | 'textedit' | 'terminal' | 'settings' | 'assistant'
+export type AppId = 'finder' | 'safari' | 'textedit' | 'terminal' | 'settings' | 'assistant' | 'trash'
 export type EntryType = 'folder' | 'file'
 
 export interface FsEntry {
@@ -14,9 +14,28 @@ export interface WindowFrame {
   height: number
 }
 
+export interface DesktopSpace {
+  id: string
+  name: string
+}
+
+export interface SystemNotification {
+  id: string
+  title: string
+  message: string
+  time: number
+}
+
+export interface TrashItem {
+  path: string
+  entries: Record<string, FsEntry>
+  deletedAt: number
+}
+
 export interface WindowState {
   open: boolean
   minimized: boolean
+  minimizing: boolean
   maximized: boolean
   zIndex: number
   frame: WindowFrame
@@ -29,6 +48,7 @@ export const appNames: Record<AppId, string> = {
   terminal: 'Terminal',
   settings: 'System Settings',
   assistant: 'Mac Assistant',
+  trash: 'Trash',
 }
 
 export const appFrames: Record<AppId, WindowFrame> = {
@@ -38,4 +58,5 @@ export const appFrames: Record<AppId, WindowFrame> = {
   terminal: { x: 250, y: 115, width: 700, height: 460 },
   settings: { x: 170, y: 75, width: 810, height: 585 },
   assistant: { x: 260, y: 95, width: 700, height: 600 },
+  trash: { x: 210, y: 110, width: 720, height: 510 },
 }

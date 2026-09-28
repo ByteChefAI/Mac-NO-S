@@ -10,6 +10,20 @@ type AssistantUiCommand = {
 
 const wait = (milliseconds: number) => new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds))
 
+export function requestAssistantConfirmation(title: string, message: string) {
+  const id = `${Date.now()}-${Math.random()}`
+  return new Promise<boolean>((resolve) => {
+    const finish = (event: Event) => {
+      const answer = (event as CustomEvent<{ id: string; approved: boolean }>).detail
+      if (answer?.id !== id) return
+      window.removeEventListener('mac-assistant-confirmed', finish)
+      resolve(answer.approved)
+    }
+    window.addEventListener('mac-assistant-confirmed', finish)
+    window.dispatchEvent(new CustomEvent('mac-assistant-confirm', { detail: { id, title, message } }))
+  })
+}
+
 function showCursor(x: number, y: number, clicking = false, visible = true) {
   window.dispatchEvent(new CustomEvent('mac-assistant-cursor', { detail: { x, y, clicking, visible } }))
 }
@@ -125,6 +139,18 @@ export async function performVisibleAssistantCommand(command: AssistantUiCommand
       return `Opened ${command.app}.`
     }
     if (command.action === 'create_file' || command.action === 'create_folder') return await createEntry(command)
+    if (command.action === 'move_to_trash' && command.path) {
+      const target = normalizePath(command.path)
+      const parent = normalizePath(target.slice(0, target.lastIndexOf('/')) || '/')
+      await navigateFinder(parent)
+      const item = findByData<HTMLElement>('[data-entry-path]', 'entryPath', target)
+      if (!item) throw new Error(`Finder could not find ${target}.`)
+      await clickElement(item)
+      await clickElement(await findElement<HTMLElement>('[title="Move selected to the Trash"]', 'Finder’s Trash button'))
+      await clickElement(await findElement<HTMLElement>('[data-confirm-trash]', 'Finder’s Trash confirmation'))
+      const stillExists = findByData<HTMLElement>('[data-entry-path]', 'entryPath', target)
+      return stillExists ? `The user canceled moving ${target} to the Trash.` : `Moved ${target} to the Trash.`
+    }
     if (command.action === 'read_file' && command.path) {
       const target = normalizePath(command.path)
       const parent = normalizePath(target.slice(0, target.lastIndexOf('/')) || '/')

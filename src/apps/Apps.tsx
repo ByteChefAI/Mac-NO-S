@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Cloud, File
 import { useSystemStore, normalizePath } from '../system/store'
 import type { FsEntry } from '../system/types'
 import { assistantTools, DEFAULT_GROQ_MODEL, executeAssistantTool } from './assistantTools'
+import { showOSAlert, showOSConfirm, showOSPrompt } from '../system/dialogs'
 
 const childrenAt = (files: Record<string, FsEntry>, folder: string) => Object.entries(files)
   .filter(([path]) => path !== folder && normalizePath(path.slice(0, path.lastIndexOf('/')) || '/') === folder)
@@ -13,14 +14,38 @@ const basename = (path: string) => path.slice(path.lastIndexOf('/') + 1) || 'Mac
 const iconFor = (entry: FsEntry) => entry.type === 'folder' ? <Folder size={25} fill="#79aefc" color="#4f88dc" /> : <FilePlus2 size={24} color="#92a6c8" />
 
 export function FinderApp() {
-  const { files, createEntry, deleteEntry, openApp } = useSystemStore(useShallow((state) => ({ files: state.files, createEntry: state.createEntry, deleteEntry: state.deleteEntry, openApp: state.openApp })))
+  const { files, createEntry, deleteEntry, moveEntry, renameEntry, openApp } = useSystemStore(useShallow((state) => ({ files: state.files, createEntry: state.createEntry, deleteEntry: state.deleteEntry, moveEntry: state.moveEntry, renameEntry: state.renameEntry, openApp: state.openApp })))
   const [folder, setFolder] = useState('/Documents')
   const [selection, setSelection] = useState<string | null>(null)
   const [layout, setLayout] = useState<'grid' | 'list'>('grid')
+  const [search, setSearch] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [draftEntry, setDraftEntry] = useState<{ type: 'folder' | 'file'; name: string }>({ type: 'file', name: '' })
   const [creating, setCreating] = useState(false)
-  const entries = useMemo(() => childrenAt(files, folder), [files, folder])
-  const navigate = (path: string) => { setFolder(path); setSelection(null) }
+  const entries = useMemo(() => childrenAt(files, folder).filter(([path]) => basename(path).toLowerCase().includes(search.toLowerCase())), [files, folder, search])
+  const navigate = (path: string) => { setFolder(path); setSelection(null); setSearch('') }
+  useEffect(() => {
+    const openPath = (event: Event) => navigate((event as CustomEvent<string>).detail)
+    window.addEventListener('finder-open-path', openPath)
+    return () => window.removeEventListener('finder-open-path', openPath)
+  }, [])
+  const renameSelected = async () => {
+    if (!selection) return
+    const next = await showOSPrompt('Rename Item', 'Enter a new name for this item.', basename(selection))
+    if (next && renameEntry(selection, next)) setSelection(`${selection.slice(0, selection.lastIndexOf('/'))}/${next}`)
+  }
+  const confirmMoveToTrash = async () => {
+    if (!selection) return
+    if (await showOSConfirm('Move to Trash?', `Move ${basename(selection)} to the Trash?`, 'Move to Trash')) { deleteEntry(selection); setSelection(null) }
+  }
+  const dropEntry = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const source = event.dataTransfer.getData('application/x-mac-nos-file')
+    if (!source) return
+    const target = (event.target as HTMLElement).closest<HTMLElement>('[data-entry-path]')
+    const destination = target && files[target.dataset.entryPath ?? '']?.type === 'folder' ? target.dataset.entryPath! : folder
+    moveEntry(source, destination)
+  }
   const beginEntry = (type: 'folder' | 'file') => { setDraftEntry({ type, name: type === 'folder' ? 'Untitled Folder' : 'Untitled.txt' }); setCreating(true) }
   const commitEntry = (event: React.FormEvent) => {
     event.preventDefault()
@@ -40,12 +65,28 @@ export function FinderApp() {
   const openSelected = (path: string, entry: FsEntry) => { if (entry.type === 'folder') navigate(path); else openFile(path) }
 
   return <div className="finder-app">
-    <aside className="finder-sidebar"><div className="sidebar-group-label">Favorites</div>{[['/Desktop', 'Desktop'], ['/Documents', 'Documents'], ['/Downloads', 'Downloads'], ['/Pictures', 'Pictures']].map(([path, label]) => <button key={path} data-path={path} className={`sidebar-item ${folder === path ? 'selected' : ''}`} onClick={() => navigate(path)}><span>{label === 'Desktop' ? '▧' : label === 'Documents' ? '▤' : label === 'Downloads' ? '⇩' : '▣'}</span>{label}</button>)}<div className="sidebar-group-label locations-label">Locations</div><button className="sidebar-item" data-path="/" onClick={() => navigate('/')}><span>⌘</span>Macintosh HD</button><div className="sidebar-bottom"><Cloud size={15} /> iCloud Drive</div></aside>
-    <section className="finder-main"><div className="finder-toolbar"><div className="finder-nav"><button title="Back" onClick={() => navigate('/') }><ArrowLeft size={15} /></button><button title="Forward" disabled><ArrowRight size={15} /></button></div><h2>{basename(folder)}</h2><div className="toolbar-actions"><button title="New folder" onClick={() => beginEntry('folder')}><FolderPlus size={16} /></button><button title="New file" onClick={() => beginEntry('file')}><FilePlus2 size={16} /></button><button title="Delete selected" disabled={!selection} onClick={() => { if (selection && window.confirm(`Move ${basename(selection)} to the Trash?`)) { deleteEntry(selection); setSelection(null) } }}><Trash2 size={15} /></button><button title="List view" className={layout === 'list' ? 'active' : ''} onClick={() => setLayout(layout === 'grid' ? 'list' : 'grid')}><Grid2X2 size={15} /></button><button title="More options"><MoreHorizontal size={17} /></button><button title="Search"><Search size={15} /></button></div></div><div className={`finder-path ${layout}`} data-current-folder={folder}>
-      {creating && <form className="file-entry-create" onSubmit={commitEntry}><input data-assistant-entry-name aria-label={`New ${draftEntry.type} name`} autoFocus value={draftEntry.name} onChange={(event) => setDraftEntry({ ...draftEntry, name: event.target.value })} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(false) }} /><button data-assistant-entry-submit type="submit" aria-label="Create item"><Check size={14} /></button></form>}
-      {entries.length ? entries.map(([path, entry]) => <button key={path} data-entry-path={path} className={`file-entry ${selection === path ? 'selected' : ''}`} onClick={() => setSelection(path)} onDoubleClick={() => openSelected(path, entry)}>{iconFor(entry)}<span>{basename(path)}</span></button>) : !creating && <div className="empty-folder"><Folder size={38} /><span>This folder is empty</span></div>}
-    </div><footer className="finder-status">{entries.length} items <span>Available on this Mac</span></footer></section>
+    <aside className="finder-sidebar"><div className="sidebar-group-label">Favorites</div>{[['/Desktop', 'Desktop'], ['/Documents', 'Documents'], ['/Downloads', 'Downloads'], ['/Pictures', 'Pictures']].map(([path, label]) => <button key={path} data-path={path} className={`sidebar-item ${folder === path ? 'selected' : ''}`} onClick={() => navigate(path)}><span>{label === 'Desktop' ? '▧' : label === 'Documents' ? '▤' : label === 'Downloads' ? '⇩' : '▣'}</span>{label}</button>)}<div className="sidebar-group-label locations-label">Locations</div><button className="sidebar-item" data-path="/" onClick={() => navigate('/')}><span>⌘</span>Macintosh HD</button><button className="sidebar-item" onClick={() => useSystemStore.getState().openApp('trash')}><span>▥</span>Trash</button><div className="sidebar-bottom"><Cloud size={15} /> iCloud Drive</div></aside>
+    <section className="finder-main">
+      <div className="finder-toolbar"><div className="finder-nav"><button title="Back" onClick={() => navigate('/') }><ArrowLeft size={15} /></button><button title="Forward" disabled><ArrowRight size={15} /></button></div><h2>{basename(folder)}</h2><div className="toolbar-actions"><button title="New folder" onClick={() => beginEntry('folder')}><FolderPlus size={16} /></button><button title="New file" onClick={() => beginEntry('file')}><FilePlus2 size={16} /></button><button title="Rename selected" disabled={!selection} onClick={() => void renameSelected()}>Rename</button><button title="Move selected to Trash" disabled={!selection} onClick={() => void confirmMoveToTrash()}><Trash2 size={15} /></button><button title="List view" className={layout === 'list' ? 'active' : ''} onClick={() => setLayout(layout === 'grid' ? 'list' : 'grid')}><Grid2X2 size={15} /></button></div></div>
+      <div className="finder-breadcrumbs">{folder.split('/').filter(Boolean).map((part, index, parts) => { const path = `/${parts.slice(0, index + 1).join('/')}`; return <span key={path}><button onClick={() => navigate(path)}>{part}</button><span>›</span></span>})}</div>
+      <div className={`finder-path ${layout}`} data-current-folder={folder} onDragOver={(event) => event.preventDefault()} onDrop={dropEntry}>
+        <div className="finder-inline-search"><Search size={14} /><input aria-label="Search this folder" placeholder="Search this folder" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+        {pendingDelete && <div className="finder-delete-confirm" data-finder-delete-confirm><span>Move {basename(pendingDelete)} to the Trash?</span><button onClick={() => setPendingDelete(null)}>Cancel</button><button className="destructive" data-confirm-trash onClick={() => { deleteEntry(pendingDelete); setSelection(null); setPendingDelete(null) }}>Move to Trash</button></div>}
+        {creating && <form className="file-entry-create" onSubmit={commitEntry}><input data-assistant-entry-name aria-label={`New ${draftEntry.type} name`} autoFocus value={draftEntry.name} onChange={(event) => setDraftEntry({ ...draftEntry, name: event.target.value })} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(false) }} /><button data-assistant-entry-submit type="submit" aria-label="Create item"><Check size={14} /></button></form>}
+        {entries.length ? entries.map(([path, entry]) => <button key={path} draggable data-entry-path={path} className={`file-entry ${selection === path ? 'selected' : ''}`} onDragStart={(event) => event.dataTransfer.setData('application/x-mac-nos-file', path)} onClick={() => setSelection(path)} onDoubleClick={() => openSelected(path, entry)}>{iconFor(entry)}<span>{basename(path)}</span></button>) : !creating && <div className="empty-folder"><Folder size={38} /><span>{search ? 'No matching items' : 'This folder is empty'}</span></div>}
+      </div><footer className="finder-status">{entries.length} items <span>Available on this Mac</span></footer>
+    </section>
   </div>
+}
+
+export function TrashApp() {
+  const { trash, restoreTrashItem, permanentlyDeleteTrashItem, emptyTrash } = useSystemStore(useShallow((state) => ({
+    trash: state.trash,
+    restoreTrashItem: state.restoreTrashItem,
+    permanentlyDeleteTrashItem: state.permanentlyDeleteTrashItem,
+    emptyTrash: state.emptyTrash,
+  })))
+  return <section className="trash-app"><header className="trash-toolbar"><strong>{trash.length ? `${trash.length} items` : 'Trash is empty'}</strong><button className="small-action destructive" disabled={!trash.length} onClick={() => void showOSConfirm('Empty Trash?', 'Permanently delete every item in the Trash?', 'Empty Trash').then((confirmed) => confirmed && emptyTrash())}>Empty Trash…</button></header>{trash.length ? <div className="trash-list">{trash.map((item) => <article className="trash-row" key={`${item.path}-${item.deletedAt}`}><div><strong>{item.path.slice(item.path.lastIndexOf('/') + 1)}</strong><small>Original location: {item.path.slice(0, item.path.lastIndexOf('/')) || '/'}</small></div><button title="Put Back" onClick={() => restoreTrashItem(item.path)}>Put Back</button><button className="destructive" title="Delete permanently" onClick={() => void showOSConfirm('Delete Permanently?', `Permanently delete ${item.path}?`, 'Delete').then((confirmed) => confirmed && permanentlyDeleteTrashItem(item.path))}><Trash2 size={14} /></button></article>)}</div> : <div className="trash-empty"><Trash2 size={38} /><span>Items you move to the Trash appear here.</span></div>}</section>
 }
 
 export function TextEditApp() {
@@ -113,38 +154,44 @@ function SettingSwitch({ label, description, checked, onChange }: { label: strin
 }
 
 export function SettingsApp() {
-  const { darkMode, toggleDarkMode, wallpaper, setWallpaper, files, wifiEnabled, bluetoothEnabled, notificationsEnabled, focusMode, accentColor, brightness, showDesktopIcons, dockMagnification, assistantControlEnabled, updatePreferences, resetFilesystem } = useSystemStore(useShallow((state) => ({
-    darkMode: state.darkMode, toggleDarkMode: state.toggleDarkMode, wallpaper: state.wallpaper, setWallpaper: state.setWallpaper, files: state.files,
+  const { darkMode, wallpaper, setWallpaper, files, wifiEnabled, bluetoothEnabled, notificationsEnabled, focusMode, accentColor, brightness, volume, autoAppearance, reduceMotion, highContrast, soundEffectsEnabled, showDesktopIcons, dockMagnification, assistantControlEnabled, updatePreferences, resetFilesystem } = useSystemStore(useShallow((state) => ({
+    darkMode: state.darkMode, wallpaper: state.wallpaper, setWallpaper: state.setWallpaper, files: state.files,
     wifiEnabled: state.wifiEnabled, bluetoothEnabled: state.bluetoothEnabled, notificationsEnabled: state.notificationsEnabled, focusMode: state.focusMode,
-    accentColor: state.accentColor, brightness: state.brightness, showDesktopIcons: state.showDesktopIcons, dockMagnification: state.dockMagnification,
+    accentColor: state.accentColor, brightness: state.brightness, volume: state.volume, autoAppearance: state.autoAppearance, reduceMotion: state.reduceMotion, highContrast: state.highContrast, soundEffectsEnabled: state.soundEffectsEnabled, showDesktopIcons: state.showDesktopIcons, dockMagnification: state.dockMagnification,
     assistantControlEnabled: state.assistantControlEnabled, updatePreferences: state.updatePreferences, resetFilesystem: state.resetFilesystem,
   })))
   const [section, setSection] = useState('Appearance')
   const [query, setQuery] = useState('')
-  const sections = ['Wi-Fi', 'Bluetooth', 'Network', 'Notifications', 'General', 'Appearance', 'Wallpaper', 'Desktop & Dock', 'Privacy & Security']
+  const sections = ['Wi-Fi', 'Bluetooth', 'Network', 'Notifications', 'General', 'Appearance', 'Wallpaper', 'Desktop & Dock', 'Keyboard', 'Sound', 'Accessibility', 'Battery', 'Storage', 'Privacy & Security']
   const filtered = sections.filter((item) => item.toLowerCase().includes(query.toLowerCase()))
   const accentColors = ['#1976d2', '#d44336', '#e98126', '#d2a629', '#55a85a', '#9c6ade']
   const resetFiles = () => {
-    if (window.confirm('Remove all files from this Mac? This cannot be undone.')) resetFilesystem()
+    void showOSConfirm('Erase Virtual Files?', 'Remove all files from this Mac? This cannot be undone.', 'Erase Files').then((confirmed) => confirmed && resetFilesystem())
   }
 
   let content
   if (section === 'Appearance') content = <>
     <p>Choose how Mac-NO-S looks and feels.</p>
-    <div className="appearance-options"><button className={!darkMode ? 'chosen' : ''} onClick={() => darkMode && toggleDarkMode()}><span className="appearance-preview light-preview" />Light</button><button className={darkMode ? 'chosen' : ''} onClick={() => !darkMode && toggleDarkMode()}><span className="appearance-preview dark-preview" />Dark</button></div>
+    <div className="appearance-options"><button className={!autoAppearance && !darkMode ? 'chosen' : ''} onClick={() => updatePreferences({ autoAppearance: false, darkMode: false })}><span className="appearance-preview light-preview" />Light</button><button className={!autoAppearance && darkMode ? 'chosen' : ''} onClick={() => updatePreferences({ autoAppearance: false, darkMode: true })}><span className="appearance-preview dark-preview" />Dark</button></div>
+    <SettingSwitch label="Automatic appearance" description="Match the system appearance schedule" checked={autoAppearance} onChange={() => { const next = !autoAppearance; updatePreferences({ autoAppearance: next, ...(next ? { darkMode: window.matchMedia('(prefers-color-scheme: dark)').matches } : {}) }) }} />
     <div className="setting-row"><div><strong>Accent color</strong><small>Used for selections and highlights</small></div><div className="swatches">{accentColors.map((color) => <button key={color} className={accentColor === color ? 'chosen' : ''} style={{ background: color }} aria-label={`Set accent color ${color}`} onClick={() => updatePreferences({ accentColor: color })} />)}</div></div>
     <label className="range-setting"><span>Display brightness</span><input type="range" min="35" max="100" value={brightness} onChange={(event) => updatePreferences({ brightness: Number(event.target.value) })} /><output>{brightness}%</output></label>
   </>
   else if (section === 'Wi-Fi') content = <><p>Connect this simulated Mac to a wireless network.</p><SettingSwitch label="Wi-Fi" description={wifiEnabled ? 'Connected to Studio Network' : 'Turn on Wi-Fi to see available networks'} checked={wifiEnabled} onChange={() => updatePreferences({ wifiEnabled: !wifiEnabled })} />{wifiEnabled && <div className="setting-row"><div><strong>Studio Network</strong><small>Secured · Connected</small></div><span className="spec-pill">✓</span></div>}</>
-  else if (section === 'Bluetooth') content = <><p>Connect wireless accessories to this Mac.</p><SettingSwitch label="Bluetooth" description={bluetoothEnabled ? 'On · No new devices nearby' : 'Bluetooth is off'} checked={bluetoothEnabled} onChange={() => updatePreferences({ bluetoothEnabled: !bluetoothEnabled })} />{bluetoothEnabled && <div className="setting-row"><div><strong>My Devices</strong><small>No devices connected</small></div><button className="small-action" onClick={() => window.alert('Put your Bluetooth accessory in pairing mode to connect it.')}>Connect</button></div>}</>
+  else if (section === 'Bluetooth') content = <><p>Connect wireless accessories to this Mac.</p><SettingSwitch label="Bluetooth" description={bluetoothEnabled ? 'On · No new devices nearby' : 'Bluetooth is off'} checked={bluetoothEnabled} onChange={() => updatePreferences({ bluetoothEnabled: !bluetoothEnabled })} />{bluetoothEnabled && <div className="setting-row"><div><strong>My Devices</strong><small>No devices connected</small></div><button className="small-action" onClick={() => void showOSAlert('Bluetooth', 'Put your Bluetooth accessory in pairing mode to connect it.')}>Connect</button></div>}</>
   else if (section === 'Network') content = <><p>Network connections for this Mac.</p><div className="setting-row"><div><strong>Wi-Fi</strong><small>{wifiEnabled ? 'Studio Network · Connected' : 'Off'}</small></div><span className={`connection-state ${wifiEnabled ? 'connected' : ''}`}>{wifiEnabled ? 'Connected' : 'Not connected'}</span></div><div className="setting-row"><div><strong>Private Wi-Fi address</strong><small>Rotates periodically for privacy</small></div><span className="spec-pill">On</span></div></>
   else if (section === 'Notifications') content = <><p>Choose when notifications are shown.</p><SettingSwitch label="Allow notifications" description="Show alerts from apps on this Mac" checked={notificationsEnabled} onChange={() => updatePreferences({ notificationsEnabled: !notificationsEnabled })} /><SettingSwitch label="Focus" description="Silence notifications while you work" checked={focusMode} onChange={() => updatePreferences({ focusMode: !focusMode })} /></>
-  else if (section === 'General') content = <><p>About this Mac and its local storage.</p><div className="setting-row"><div><strong>Mac-NO-S</strong><small>Browser Desktop · Version 1.0</small></div><span className="spec-pill">{navigator.platform || 'Web'}</span></div><div className="setting-row"><div><strong>Virtual filesystem</strong><small>{Object.keys(files).length} items stored in this browser</small></div><span className="spec-pill">Local</span></div></>
+  else if (section === 'General') content = <><p>About this Mac and its local storage.</p><div className="setting-row"><div><strong>Mac-NO-S</strong><small>Browser Desktop · Version 1.0</small></div><span className="spec-pill">{navigator.platform || 'Web'}</span></div><div className="setting-row"><div><strong>Browser</strong><small>{navigator.userAgent.split(' ').slice(-2).join(' ')}</small></div><span className="spec-pill">Web runtime</span></div></>
   else if (section === 'Wallpaper') content = <><p>Choose a picture or color for the desktop.</p><div className="wallpaper-options">{wallpapers.map((item) => <button key={item.id} className={wallpaper === item.id ? 'chosen' : ''} onClick={() => setWallpaper(item.id)}><span style={{ background: item.style }} />{item.label}</button>)}</div></>
   else if (section === 'Desktop & Dock') content = <><p>Choose what appears on your desktop and Dock.</p><SettingSwitch label="Show desktop icons" description="Show Macintosh HD and Projects on the desktop" checked={showDesktopIcons} onChange={() => updatePreferences({ showDesktopIcons: !showDesktopIcons })} /><SettingSwitch label="Dock magnification" description="Enlarge icons when the pointer moves over the Dock" checked={dockMagnification} onChange={() => updatePreferences({ dockMagnification: !dockMagnification })} /></>
+  else if (section === 'Keyboard') content = <><p>Keyboard shortcuts for navigating this desktop.</p>{[['⌘ Space', 'Open Spotlight'], ['⌘ Tab', 'Switch applications'], ['⌘ W', 'Close active window'], ['⌘ Q', 'Quit active app'], ['F3', 'Mission Control'], ['Control ← / →', 'Switch desktop Spaces']].map(([shortcut, action]) => <div className="setting-row shortcut-row" key={shortcut}><strong>{action}</strong><kbd>{shortcut}</kbd></div>)}</>
+  else if (section === 'Sound') content = <><p>Adjust simulated system output and interface sounds.</p><label className="range-setting"><span>Output volume</span><input type="range" min="0" max="100" value={volume} onChange={(event) => updatePreferences({ volume: Number(event.target.value) })} /><output>{volume}%</output></label><SettingSwitch label="Play interface sound effects" description="Play a short sound when Hey Mac activates" checked={soundEffectsEnabled} onChange={() => updatePreferences({ soundEffectsEnabled: !soundEffectsEnabled })} /><div className="setting-row"><div><strong>Sound check</strong><small>Preview the assistant activation sound</small></div><button className="small-action" onClick={() => window.dispatchEvent(new Event('mac-assistant-blup'))}>Play</button></div></>
+  else if (section === 'Accessibility') content = <><p>Adjust motion and contrast for this desktop.</p><SettingSwitch label="Reduce motion" description="Use shorter, simpler window transitions" checked={reduceMotion} onChange={() => updatePreferences({ reduceMotion: !reduceMotion })} /><SettingSwitch label="Increase contrast" description="Strengthen borders and text contrast" checked={highContrast} onChange={() => updatePreferences({ highContrast: !highContrast })} /></>
+  else if (section === 'Battery') content = <><p>Power controls available to this browser desktop.</p><div className="setting-row"><div><strong>Power source</strong><small>Host battery status is not exposed to this website</small></div><span className="spec-pill">Web runtime</span></div><div className="setting-row"><div><strong>Low Power Mode</strong><small>Reduce visual effects and display brightness</small></div><button className="small-action" onClick={() => updatePreferences({ reduceMotion: true, brightness: Math.min(brightness, 70), highContrast: true })}>Turn On</button></div></>
+  else if (section === 'Storage') { const bytes = new Blob([JSON.stringify(files)]).size; content = <><p>Storage used by this browser desktop.</p><div className="storage-meter"><span style={{ width: `${Math.min(100, bytes / 50000 * 100)}%` }} /></div><div className="setting-row"><div><strong>Virtual files</strong><small>{Object.keys(files).length} items</small></div><span className="spec-pill">{bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`}</span></div><div className="setting-row"><div><strong>Browser storage</strong><small>Data stays in this browser profile</small></div><span className="spec-pill">Local</span></div></> }
   else content = <><p>Control local data and assistant access on this browser.</p><SettingSwitch label="Mac Assistant desktop access" description="Allow the assistant to open apps and manage virtual files" checked={assistantControlEnabled} onChange={() => updatePreferences({ assistantControlEnabled: !assistantControlEnabled })} /><div className="setting-row"><div><strong>Clear virtual filesystem</strong><small>Remove files saved by this browser desktop</small></div><button className="small-action destructive" onClick={resetFiles}>Clear files…</button></div></>
 
-  return <div className="settings-app"><aside className="settings-sidebar"><div className="settings-search"><Search size={14} /><input placeholder="Search Settings" aria-label="Search settings" value={query} onChange={(event) => setQuery(event.target.value)} /></div>{filtered.map((item, index) => <button key={item} className={section === item ? 'selected' : ''} onClick={() => setSection(item)}><span className={`settings-symbol symbol-${index}`}>{['◉', 'ᛒ', '⌘', '◉', '⚙', '◐', '▧', '▣', '◈'][sections.indexOf(item)]}</span>{item}</button>)}</aside><section className="settings-main"><h2>{section}</h2>{content}</section></div>
+  return <div className="settings-app"><aside className="settings-sidebar"><div className="settings-search"><Search size={14} /><input placeholder="Search Settings" aria-label="Search settings" value={query} onChange={(event) => setQuery(event.target.value)} /></div>{filtered.map((item, index) => <button key={item} className={section === item ? 'selected' : ''} onClick={() => setSection(item)}><span className={`settings-symbol symbol-${index}`}>{['◉', 'ᛒ', '⌘', '◉', '⚙', '◐', '▧', '▣', '⌨', '♪', '◉', '▰', '▤', '◈'][sections.indexOf(item)]}</span>{item}</button>)}</aside><section className="settings-main"><h2>{section}</h2>{content}</section></div>
 }
 
 export function SafariApp() {

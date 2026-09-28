@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { MousePointer2 } from 'lucide-react'
 
 type CursorState = { x: number; y: number; clicking: boolean; visible: boolean }
 
@@ -13,5 +12,5 @@ export function AssistantCursor() {
   }, [])
 
   if (!cursor.visible) return null
-  return <div className={`assistant-cursor ${cursor.clicking ? 'clicking' : ''}`} style={{ transform: `translate3d(${cursor.x}px, ${cursor.y}px, 0)` }} aria-hidden="true"><MousePointer2 size={28} fill="#f7fbff" strokeWidth={1.8} /><span>Mac Assistant</span></div>
+  return <div className={`assistant-cursor ${cursor.clicking ? 'clicking' : ''}`} style={{ transform: `translate3d(${cursor.x}px, ${cursor.y}px, 0)` }} aria-hidden="true"><img src="/cursors/cursor.svg" alt="" /><span>Mac Assistant</span></div>
 }
